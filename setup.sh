@@ -67,3 +67,5 @@ if [ ! -f "$root/todo-public.deploylink" ] &&
 else
   echo "DeployDesk configuration was not created; use setup.ps1 interactively or set all TODO_DEPLOY_* variables."
 fi
+
+echo 'Optional Android test APK: see "Android-APK bauen" in README.md.'

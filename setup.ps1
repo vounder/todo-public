@@ -80,4 +80,5 @@ try {
         Write-Host 'Created local DeployDesk configuration (target values were not displayed).'
     } else { Write-Host 'todo-public.deploylink already exists; it was not changed.' }
     Write-Host 'Setup completed.'
+    Write-Host 'Optional Android test APK: see "Android-APK bauen" in README.md.'
 } catch { Write-Error $_.Exception.Message; exit 1 }

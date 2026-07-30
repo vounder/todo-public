@@ -122,6 +122,43 @@ EXPO_PUBLIC_SERVER_URL=https://sync.example.test npm start
 
 Ein lokal gespeicherter Wert hat Vorrang vor diesem Build-Standard.
 
+## Android-APK bauen
+
+Das Repository enthält absichtlich keine vorgebaute APK. Eine installierbare
+Test-APK kann ohne Signierschlüssel über GitHub Actions erzeugt werden:
+
+1. Im öffentlichen Repository **Actions → Build Android APK** öffnen.
+2. **Run workflow** wählen und den Lauf auf dem gewünschten Branch starten.
+3. Nach erfolgreichem Abschluss unten im Lauf das Artefakt
+   `todo-public-test-apk` herunterladen.
+4. Das ZIP-Archiv entpacken und `app-release.apk` auf das Android-Gerät
+   übertragen und installieren.
+
+Das Artefakt wird nach 14 Tagen automatisch gelöscht. Die Test-APK wird mit
+dem automatisch erzeugten Android-Debugschlüssel signiert und ist für Tests
+und direkte Installation gedacht, nicht für den Google Play Store.
+
+Für einen lokalen Build werden zusätzlich OpenJDK 17 und ein eingerichtetes
+Android SDK benötigt. Unter Windows sollte das Repository wegen der nativen
+C++-Buildpfade möglichst kurz liegen, zum Beispiel unter
+`C:\src\todo-public`. Danach:
+
+```powershell
+cd TodoApp
+npm ci
+npx expo prebuild --platform android --no-install
+cd android
+$env:NODE_ENV = "production"
+.\gradlew.bat app:assembleRelease --no-daemon
+```
+
+Die APK liegt anschließend unter
+`TodoApp/android/app/build/outputs/apk/release/app-release.apk`. Für eine
+veröffentlichbare, signierte Version müssen eigene Android-Signierdaten
+verwendet werden. Google Play erwartet normalerweise ein signiertes Android
+App Bundle (`.aab`); dafür gilt die offizielle
+[Expo-Anleitung für lokale Produktions-Builds](https://docs.expo.dev/guides/local-app-production/).
+
 ## DeployDesk
 
 DeployDesk liest einen Schema-v2-Link und startet den repositoryeigenen Runner:
