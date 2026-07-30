@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 2,
+  "project": {
+    "id": "todo-public-environment",
+    "name": "Todo Public",
+    "description": "Replace all example target values during local setup.",
+    "accentColor": "#4F46E5"
+  },
+  "repository": {
+    "remote": "origin",
+    "branch": "main"
+  },
+  "server": {
+    "name": "Deployment environment",
+    "host": "deploy.example.invalid",
+    "user": "deploy",
+    "sshPort": 22,
+    "remotePath": "/srv/apps/todo-public",
+    "healthCheck": {
+      "port": 8080,
+      "path": "/health",
+      "expectedStatus": 200,
+      "attempts": 20,
+      "intervalSeconds": 2
+    }
+  },
+  "runner": {
+    "type": "powershell",
+    "file": "deploy/deploy.ps1",
+    "protocol": "deploydesk-jsonl-v1",
+    "arguments": []
+  },
+  "options": [],
+  "links": []
+}

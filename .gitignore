@@ -1,0 +1,19 @@
+# Local runtime and deployment configuration
+.env
+*.deploylink
+!*.deploylink.example
+
+# Local configuration and generated output
+*.local
+*.local.*
+.claude/
+.idea/
+.expo/
+node_modules/
+build/
+dist/
+logs/
+*.log
+
+# Keep reviewed templates available
+!.env.example

@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            TodoApp/package-lock.json
+            server/package-lock.json
+
+      - name: Install and test app
+        working-directory: TodoApp
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npx expo export --platform web --output-dir dist
+
+      - name: Install and test server
+        working-directory: server
+        run: |
+          npm ci
+          npm test
+          npm audit --omit=dev
+
+      - name: Validate Compose and build image
+        run: |
+          docker compose --env-file .env.example config --quiet
+          docker compose --env-file .env.example build
+
+      - name: Validate DeployDesk runner
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./deploy/deploy.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+          $events = @(
+            ./deploy/deploy.ps1 `
+              -DeployLinkPath ./todo-public.deploylink.example `
+              -ValidateOnly `
+              -NonInteractive `
+              -OutputFormat JsonLines |
+              ForEach-Object { $_ | ConvertFrom-Json }
+          )
+          if ($events.type -contains "completed") {
+            throw "ValidateOnly must not emit completed."
+          }
+          if ($events.type -contains "error") {
+            throw "ValidateOnly emitted an error."
+          }
+
+      - name: Scan public tree
+        shell: pwsh
+        run: ./scripts/check-public-safety.ps1
