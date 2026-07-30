@@ -26,6 +26,7 @@ jobs:
         working-directory: TodoApp
         run: |
           npm ci
+          npx expo install --check
           npm test
           npm run typecheck
           npx expo export --platform web --output-dir dist
