@@ -5,8 +5,8 @@ umask 077
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 command -v node >/dev/null || { echo "Node.js is required." >&2; exit 1; }
 command -v npm >/dev/null || { echo "npm is required." >&2; exit 1; }
-node_major=$(node -p "process.versions.node.split('.')[0]")
-[ "$node_major" -ge 20 ] || { echo "Node.js 20 or newer is required." >&2; exit 1; }
+node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=13)?0:1)' ||
+  { echo "Node.js 22.13 or newer is required." >&2; exit 1; }
 
 (cd "$root/TodoApp" && npm ci)
 (cd "$root/server" && npm ci)
@@ -67,3 +67,5 @@ if [ ! -f "$root/todo-public.deploylink" ] &&
 else
   echo "DeployDesk configuration was not created; use setup.ps1 interactively or set all TODO_DEPLOY_* variables."
 fi
+
+echo 'Optional Android test APK: see "Android-APK bauen" in README.md.'
