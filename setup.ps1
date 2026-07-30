@@ -37,8 +37,8 @@ function Get-SetupValue(
 
 try {
     Require-Command node; Require-Command npm
-    $nodeMajor = [int]((& node -p "process.versions.node.split('.')[0]").Trim())
-    if ($LASTEXITCODE -ne 0 -or $nodeMajor -lt 20) { throw 'Node.js 20 or newer is required.' }
+    $nodeVersion = [version]((& node -p "process.versions.node").Trim())
+    if ($LASTEXITCODE -ne 0 -or $nodeVersion -lt [version]'22.13.0') { throw 'Node.js 22.13 or newer is required.' }
     Push-Location (Join-Path $root 'TodoApp'); npm ci; if ($LASTEXITCODE -ne 0) { throw 'TodoApp dependency installation failed.' }; Pop-Location
     Push-Location (Join-Path $root 'server'); npm ci; if ($LASTEXITCODE -ne 0) { throw 'Server dependency installation failed.' }; Pop-Location
     $envFile = Join-Path $root '.env'

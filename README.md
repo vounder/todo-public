@@ -20,7 +20,7 @@ lokal eingerichtet und von Git ignoriert.
 
 ## Voraussetzungen
 
-- Node.js 20 oder neuer (Produktionscontainer: gepinntes Node.js 20)
+- Node.js 22.13 oder neuer (Produktionscontainer des Backends: gepinntes Node.js 20)
 - npm
 - Docker mit Docker Compose für das selbst gehostete Backend
 - Expo Go oder eine lokale Expo-Build-Umgebung für die App
