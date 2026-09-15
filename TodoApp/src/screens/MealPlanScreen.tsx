@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { View, StyleSheet, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MealPlanEntry, MealSlot, MealStatus, Recipe } from '../types';
 import { ApiService } from '../services/ApiService';

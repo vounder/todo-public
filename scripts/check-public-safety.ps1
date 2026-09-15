@@ -23,9 +23,9 @@ $findings = [System.Collections.Generic.List[string]]::new()
 if (Test-Path -LiteralPath (Join-Path $resolvedRoot '.git')) {
     $trackedPaths = @(& git -C $resolvedRoot ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate public repository files.' }
-    $allFiles = @($trackedPaths | ForEach-Object { Get-Item -LiteralPath (Join-Path $resolvedRoot $_) })
+    $allFiles = @($trackedPaths | ForEach-Object { Get-Item -Force -LiteralPath (Join-Path $resolvedRoot $_) })
 } else {
-    $allFiles = @(Get-ChildItem -LiteralPath $resolvedRoot -File -Recurse |
+    $allFiles = @(Get-ChildItem -Force -LiteralPath $resolvedRoot -File -Recurse |
         Where-Object { $_.FullName -notmatch "[\\/](?:\.git|node_modules|artifacts|dist|build)[\\/]" })
 }
 foreach ($file in $allFiles) {

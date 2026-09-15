@@ -45,6 +45,17 @@ test('WebSocket rejection cannot be mistaken for successful HTTP-only setup', as
   assert.equal(result.success, false);
   assert.equal(result.checks.at(-1).state, 'error');
 });
+test('slow HTTP bodies time out and cancellation stops setup', async t => {
+  const server = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.write('{'); });
+  server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const timeout = await probeConnection(origin, key, { timeoutMs: 100 });
+  assert.equal(timeout.success, false); assert.equal(timeout.checks[0].state, 'error');
+  const abort = new AbortController(); abort.abort();
+  const cancelled = await probeConnection(origin, key, { signal: abort.signal });
+  assert.equal(cancelled.success, false); assert.match(cancelled.checks[0].message, /abgebrochen/);
+});
 test('QR imports only the Todo connection format and rejects credentials in origins', () => {
   const link = `todopublic://connect?server=${encodeURIComponent('https://sync.example.test')}#key=${key}`;
   const result = parseConnectionLink(link);

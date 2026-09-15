@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Modal, Platform, StyleSheet, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Button, Card, Input, Notice, Text } from './index';
 import { Theme, useThemedStyles } from '../theme/ThemeContext';
 import { ServerConfig } from '../services/ServerConfig';
@@ -13,7 +13,7 @@ export function ServerConnectionForm({ onComplete, onLocal, initialLink }: {
   onComplete?: () => void; onLocal?: () => void; initialLink?: string;
 }) {
   const styles = useThemedStyles(createStyles);
-  const [url, setUrl] = useState(ServerConfig.getServerUrl() || '');
+  const [url, setUrl] = useState(ServerConfig.getRememberedUrl() || '');
   const [key, setKey] = useState(ServerConfig.getAccessKey());
   const [error, setError] = useState('');
   const [checks, setChecks] = useState<ConnectionCheck[]>([]);

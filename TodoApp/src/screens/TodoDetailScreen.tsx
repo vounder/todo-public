@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, StyleSheet, SectionList, Pressable, KeyboardAvoidingView, Platform, BackHandler, Switch, TextInput } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { StorageService } from '../storage/StorageService';
 import { ApiService } from '../services/ApiService';
 import { TodoList, TodoItem } from '../types';

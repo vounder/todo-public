@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Theme, ThemeMode, useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { Text, ScreenHeader, Card, ListRow } from '../components';
 import { ServerConnectionForm } from '../components/ServerConnectionForm';

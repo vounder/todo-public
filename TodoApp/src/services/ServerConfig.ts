@@ -32,9 +32,10 @@ class ServerConfigStore {
     return this.loading;
   }
   getServerUrl(): string | null { return this.localOnly ? null : resolveServerUrl(this.override, buildDefault); }
+  getRememberedUrl(): string | null { return resolveServerUrl(this.override, buildDefault); }
   getAccessKey(): string { return this.accessKey; }
   isLocalOnly(): boolean { return this.localOnly; }
-  isConfigured(): boolean { return this.localOnly || !!this.getServerUrl(); }
+  isConfigured(): boolean { return this.localOnly || !!(this.getServerUrl() && this.accessKey); }
   getApiUrl(): string | null { const url = this.getServerUrl(); return url ? apiUrl(url) : null; }
   getWebSocketUrl(): string | null { const url = this.getServerUrl(); return url ? webSocketUrl(url) : null; }
   async setOverride(value: string): Promise<string> {

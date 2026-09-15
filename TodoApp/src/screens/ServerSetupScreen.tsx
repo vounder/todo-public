@@ -5,11 +5,12 @@ import { Text, Card, Button, Notice } from '../components';
 import { ServerConnectionForm } from '../components/ServerConnectionForm';
 import { Theme, useThemedStyles } from '../theme/ThemeContext';
 import { ApiService } from '../services/ApiService';
+import { ServerConfig } from '../services/ServerConfig';
 
 export function ServerSetupScreen({ onComplete, initialLink, onCancel }: { onComplete: () => void; initialLink?: string; onCancel?: () => void }) {
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
-  const [showConnection, setShowConnection] = useState(!!initialLink);
+  const [showConnection, setShowConnection] = useState(!!initialLink || !!ServerConfig.getRememberedUrl());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => { if (initialLink) setShowConnection(true); }, [initialLink]);

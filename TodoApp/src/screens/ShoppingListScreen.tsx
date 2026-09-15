@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, StyleSheet, Pressable, SectionList, ScrollView, KeyboardAvoidingView, Platform, TextInput, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ShoppingItem, ShoppingListDef, AppSettings, Tag, SortSettings, SortType, IngredientTagMapping } from '../types';
 import { ApiService } from '../services/ApiService';
