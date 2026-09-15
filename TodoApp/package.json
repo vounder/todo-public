@@ -38,10 +38,10 @@
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.30",
+    "@types/node": "^22.20.2",
     "@types/react": "~19.1.0",
     "sharp": "^0.35.3",
-    "tsx": "^4.20.6",
+    "tsx": "^4.23.13",
     "typescript": "~5.9.2",
     "ws": "^8.21.3"
   },
