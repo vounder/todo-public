@@ -54,7 +54,7 @@ export function ScreenHeader({
           />
         )}
         <View style={styles.titleBox}>
-          <Text style={variant === 'large' ? styles.titleLarge : styles.titleCompact} numberOfLines={1}>
+          <Text style={variant === 'large' ? styles.titleLarge : styles.titleCompact} numberOfLines={2} accessibilityRole="header">
             {title}
           </Text>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}

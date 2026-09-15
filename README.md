@@ -10,6 +10,13 @@ lokal eingerichtet und von Git ignoriert.
 
 ## Funktionen
 
+Stand 1.1.0: überarbeitete Android-Oberfläche, sichtbare Sync-Warteschlange,
+Rückgängig-Aktionen und zuverlässigere Bearbeitung mehrerer Einkaufslisten.
+Details stehen in [UI_UX_CHANGES.md](TodoApp/UI_UX_CHANGES.md).
+
+Die [Installationsanalyse](INSTALLATION_REVIEW.md) beschreibt die aktuellen
+Einrichtungshürden und priorisierte Verbesserungen.
+
 - Todo-Listen mit automatischer Bereinigung erledigter Einträge
 - Einkaufslisten, Kategorien und eigene Sortierungen
 - Rezepte, Essensplan und Vorratsliste
@@ -121,6 +128,13 @@ EXPO_PUBLIC_SERVER_URL=https://sync.example.test npm start
 ```
 
 Ein lokal gespeicherter Wert hat Vorrang vor diesem Build-Standard.
+
+## Android-APK und Updates
+
+Eigenständig startbare Android-APKs lassen sich gemäß
+[RELEASE_APK.md](TodoApp/RELEASE_APK.md) erstellen. App-Version 1.1.0 und der
+zugehörige Serverstand gehören zusammen: Der Server bietet neue Löschrouten
+für Gerichte und Kategorien. Quellcode-Updates führen kein Deployment aus.
 
 ## DeployDesk
 

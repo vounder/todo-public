@@ -14,6 +14,7 @@ const SortSettings = require('./models/SortSettings');
 const IngredientTagMapping = require('./models/IngredientTagMapping');
 const MealPlan = require('./models/MealPlan');
 const MealReserve = require('./models/MealReserve');
+const deleteResource = require('./deleteResource');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -131,6 +132,7 @@ app.delete('/api/todos', async (req, res) => {
 });
 
 // ---- RECIPES ----
+app.delete('/api/recipes/:id', deleteResource(Recipe, broadcast, 'RECIPES_UPDATE', 'Recipe'));
 
 app.get('/api/recipes', async (req, res) => {
   try {
@@ -220,6 +222,7 @@ app.post('/api/shopping-lists/sync', async (req, res) => {
 });
 
 // ---- TAGS ----
+app.delete('/api/tags/:id', deleteResource(Tag, broadcast, 'TAGS_UPDATE', 'Tag'));
 
 app.get('/api/tags', async (req, res) => {
   try {

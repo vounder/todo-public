@@ -26,6 +26,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <TextInput
         ref={ref}
+        accessibilityLabel={label || props.placeholder}
         placeholderTextColor={colors.textMuted}
         {...props}
         style={[styles.input, !!error && styles.inputError, style]}

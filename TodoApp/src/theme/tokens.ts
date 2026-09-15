@@ -66,13 +66,13 @@ export const LIGHT = {
   // Linien -- deutlich sichtbar. Eine Kante, die man nicht sieht, gibt der
   // Oberflaeche keine Struktur, sie macht sie nur unscharf.
   border: '#D4D4D8',
-  borderStrong: '#A1A1AA',
+  borderStrong: '#85858F',
 
   // Text -- Nahezu-Schwarz statt Mittelgrau. Der Kontrast traegt den
   // professionellen Eindruck, nicht die Entsaettigung.
   text: '#09090B',
   textSub: '#3F3F46',
-  textMuted: '#71717A',
+  textMuted: '#65656F',
 
   // Akzent
   accent: ACCENT[600],
@@ -111,11 +111,11 @@ export const DARK: typeof LIGHT = {
   inputBg: '#09090B',
 
   border: '#3F3F46',
-  borderStrong: '#52525B',
+  borderStrong: '#85858F',
 
   text: '#FAFAFA',
-  textSub: '#A1A1AA',
-  textMuted: '#71717A',
+  textSub: '#C4C4CC',
+  textMuted: '#A1A1AA',
 
   // Im Dark Mode invertiert der Akzent: heller Ton, dunkler Text darauf.
   // Das ist der Trick, mit dem eine einzige Akzentfarbe beide Modi bedient.
@@ -303,4 +303,11 @@ export const TAG_COLORS = [
  */
 export function tint(hex: string, alpha = '2E') {
   return `${hex}${alpha}`;
+}
+
+/** Keep user-selected tag colors legible on both light and dark surfaces. */
+export function tagTextColor(_hex: string, isDark: boolean): string {
+  // The tint/dot carries the user color. Neutral text also stays legible for
+  // existing white, yellow and very dark custom categories.
+  return isDark ? '#E4E4E7' : '#3F3F46';
 }

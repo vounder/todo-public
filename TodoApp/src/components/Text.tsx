@@ -1,6 +1,7 @@
 import React from 'react';
-import { Text as RNText, TextProps as RNTextProps } from 'react-native';
+import { Text as RNText, TextProps as RNTextProps, StyleSheet } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
+import { fonts } from '../theme/tokens';
 
 /**
  * Drop-in-Ersatz fuer `Text` aus react-native.
@@ -19,5 +20,11 @@ import { useTheme } from '../theme/ThemeContext';
  */
 export function Text({ style, ...props }: RNTextProps) {
   const { colors, type } = useTheme();
-  return <RNText {...props} style={[{ fontFamily: type.body.fontFamily, color: colors.text }, style]} />;
+  const weight = StyleSheet.flatten(style)?.fontWeight;
+  const numericWeight = weight === 'bold' ? 700 : Number(weight) || 400;
+  const family = numericWeight >= 700 ? fonts.bold : numericWeight >= 600 ? fonts.semibold : numericWeight >= 500 ? fonts.medium : fonts.regular;
+  // Android needs the loaded font face; fontWeight alone does not select a
+  // different Inter file. Existing typography tokens already carry a face.
+  return <RNText {...props} style={[{ fontFamily: type.body.fontFamily, color: colors.text }, style,
+    weight ? { fontFamily: family, fontWeight: 'normal' } : undefined]} />;
 }

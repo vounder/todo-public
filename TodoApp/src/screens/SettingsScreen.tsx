@@ -53,6 +53,7 @@ export default function SettingsScreen({ navigation }: any) {
               title={o.label}
               subtitle={o.description}
               onPress={() => setMode(o.mode)}
+              selected={mode === o.mode}
               trailing={
                 mode === o.mode ? (
                   <Ionicons name="checkmark" size={20} color={colors.accent} />
@@ -73,6 +74,13 @@ export default function SettingsScreen({ navigation }: any) {
             <Button standalone size="sm" variant="secondary" onPress={resetServer}>Build-Standard</Button>
           </View>
           <Text style={styles.hint}>REST und WebSocket werden automatisch aus dieser Adresse abgeleitet.</Text>
+        </Card>
+        <View style={[styles.sectionHead, { marginTop: 24 }]}>
+          <Text style={styles.sectionTitle}>Hilfe und Verbindung</Text>
+        </View>
+        <Card padding="sm">
+          <ListRow title="Verbindung prüfen" subtitle="Serverstatus und technische Diagnose" icon="pulse-outline"
+            onPress={() => navigation.navigate('Debug')} />
         </Card>
       </ScrollView>
     </View>

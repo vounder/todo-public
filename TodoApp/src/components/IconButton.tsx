@@ -11,6 +11,7 @@ export interface IconButtonProps {
   variant?: 'plain' | 'tonal';
   tone?: 'default' | 'accent' | 'danger';
   style?: StyleProp<ViewStyle>;
+  disabled?: boolean;
 }
 
 export function IconButton({
@@ -21,6 +22,7 @@ export function IconButton({
   variant = 'plain',
   tone = 'default',
   style,
+  disabled = false,
 }: IconButtonProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -28,8 +30,10 @@ export function IconButton({
 
   return (
     <TouchableOpacity
-      style={[styles.base, variant === 'tonal' && styles.tonal, style]}
+      style={[styles.base, variant === 'tonal' && styles.tonal, disabled && { opacity: 0.4 }, style]}
       onPress={onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled }}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       activeOpacity={0.7}
@@ -42,8 +46,8 @@ export function IconButton({
 const createStyles = (t: Theme) =>
   StyleSheet.create({
     base: {
-      width: 40,
-      height: 40,
+      width: 48,
+      height: 48,
       borderRadius: t.radius.sm,
       justifyContent: 'center',
       alignItems: 'center',

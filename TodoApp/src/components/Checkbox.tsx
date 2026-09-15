@@ -9,6 +9,7 @@ export interface CheckboxProps {
   shape?: 'circle' | 'square';
   size?: number;
   style?: StyleProp<ViewStyle>;
+  label?: string;
 }
 
 /**
@@ -18,12 +19,12 @@ export interface CheckboxProps {
  * Commit encoding-seitig verloren ging -- mehrere Checkboxen rendern
  * aktuell buchstaeblich nichts.
  */
-export function Checkbox({ checked, onToggle, shape = 'circle', size = 24, style }: CheckboxProps) {
+export function Checkbox({ checked, onToggle, shape = 'circle', size = 24, style, label }: CheckboxProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   const box = (
-    <View
+    <View accessible={false} importantForAccessibility="no-hide-descendants"
       style={[
         styles.box,
         { width: size, height: size, borderRadius: shape === 'circle' ? size / 2 : 6 },
@@ -43,6 +44,8 @@ export function Checkbox({ checked, onToggle, shape = 'circle', size = 24, style
       activeOpacity={0.7}
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
+      accessibilityLabel={label}
+      style={{ minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}
     >
       {box}
     </TouchableOpacity>

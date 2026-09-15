@@ -36,7 +36,7 @@ export function Card({
   if (!onPress && !onLongPress) return <View style={composed}>{children}</View>;
 
   return (
-    <TouchableOpacity style={composed} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.7}>
+    <TouchableOpacity style={composed} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.7} accessibilityRole="button">
       {children}
     </TouchableOpacity>
   );

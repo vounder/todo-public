@@ -68,8 +68,8 @@ const createStyles = (t: Theme) =>
       ...t.elevation.e2,
     },
     circle: { width: 56, height: 56, borderRadius: t.radius.pill },
-    pill: { height: 48, paddingHorizontal: t.spacing.lg, borderRadius: t.radius.pill },
+    pill: { minHeight: 48, maxWidth: '90%', paddingVertical: 10, paddingHorizontal: t.spacing.lg, borderRadius: t.radius.pill },
     primary: { backgroundColor: t.colors.accent },
     secondary: { backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border },
-    label: { ...t.type.bodyStrong },
+    label: { ...t.type.bodyStrong, flexShrink: 1 },
   });

@@ -2,7 +2,7 @@
   "expo": {
     "name": "TodoApp",
     "slug": "TodoApp",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -11,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "versionCode": 11,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F7F8FA"
@@ -29,6 +30,7 @@
     },
     "plugins": [
       "./plugins/withNetworkSecurityConfig.js",
+      "./plugins/withLocalRelease.js",
       "expo-font",
       [
         "expo-splash-screen",

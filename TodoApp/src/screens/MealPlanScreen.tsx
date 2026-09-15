@@ -1,1214 +1,338 @@
-import React, { useState, useCallback } from 'react';
-import {
-  View, TouchableOpacity, StyleSheet, ScrollView,
-  Modal, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform,
-} from 'react-native';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { View, StyleSheet, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-import { MealPlanEntry, MealSlot, MealStatus } from '../types';
+import { MealPlanEntry, MealSlot, MealStatus, Recipe } from '../types';
 import { ApiService } from '../services/ApiService';
 import { Theme, useTheme, useThemedStyles } from '../theme/ThemeContext';
-import { Text } from '../components';
+import { Text, ScreenHeader, IconButton, Button, Fab, Sheet, Input, Chip, ListRow, Notice, SyncNotice, useSnackbar } from '../components';
 
-// ── Typen ──────────────────────────────────────────────────────────────────
-interface ReserveEntry {
-  id: string;
-  title: string;
-  notes?: string;
-}
-
-const SLOT_LABELS: Record<MealSlot, string> = {
-  breakfast: 'Frühstück',
-  lunch: 'Mittagessen',
-  dinner: 'Abendessen',
-};
-
-const SLOT_ICONS: Record<MealSlot, any> = {
-  breakfast: 'sunny-outline',
-  lunch: 'restaurant-outline',
-  dinner: 'moon-outline',
-};
-
-/**
- * Die Wochentagsfarben sind entfallen: sieben Regenbogentoene haben eine
- * rein dekorative Dimension farbig kodiert und dabei mit Status und Auswahl
- * konkurriert -- also mit genau den Dimensionen, auf die es ankommt. Heutiger
- * Tag traegt jetzt den Akzent, alle anderen sind neutral.
- */
-
-const STATUS_LABELS: Partial<Record<MealStatus, string>> = {
-  planned: 'Geplant',
-  wish: 'Wunsch',
-};
-
+type Reserve = { id: string; title: string; notes?: string };
 const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
-const ENTRY_STATUSES: MealStatus[] = ['planned', 'wish'];
-
-// ── Hilfsfunktionen ────────────────────────────────────────────────────────
-function getWeekDays(baseDate: Date): Date[] {
-  const monday = new Date(baseDate);
-  const day = monday.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  monday.setDate(monday.getDate() + diff);
-  monday.setHours(0, 0, 0, 0);
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
+const SLOT_LABELS: Record<MealSlot, string> = { breakfast: 'Frühstück', lunch: 'Mittagessen', dinner: 'Abendessen' };
+const SLOT_ICONS: Record<MealSlot, keyof typeof Ionicons.glyphMap> = { breakfast: 'sunny-outline', lunch: 'restaurant-outline', dinner: 'moon-outline' };
+function iso(date: Date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
 }
-
-function toISO(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+function parseDate(value: string) {
+  const date = new Date(value + 'T12:00:00');
+  return Number.isNaN(date.getTime()) || iso(date) !== value ? null : date;
 }
-
-function formatDay(date: Date): string {
-  return date.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+function weekDays(base: Date) {
+  const monday = new Date(base); monday.setHours(12, 0, 0, 0);
+  monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
+  return Array.from({ length: 7 }, (_, index) => { const date = new Date(monday); date.setDate(monday.getDate() + index); return date; });
 }
+function shift(date: Date, days: number) { const next = new Date(date); next.setDate(next.getDate() + days); return next; }
+const dateLabel = (date: Date) => date.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
 
-function getCalendarCells(base: Date): (Date | null)[] {
-  const first = new Date(base.getFullYear(), base.getMonth(), 1);
-  const startOffset = first.getDay() === 0 ? 6 : first.getDay() - 1;
-  const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
-  const cells: (Date | null)[] = [];
-  for (let i = 0; i < startOffset; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push(new Date(base.getFullYear(), base.getMonth(), d));
-  }
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
-}
-
-// ── Komponente ─────────────────────────────────────────────────────────────
-export default function MealPlanScreen() {
-  const insets = useSafeAreaInsets();
+export default function MealPlanScreen({ navigation }: any) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-
-  // Die frueheren Modulkonstanten, jetzt ans Theme gebunden. Dadurch bleiben
-  // die Aufrufstellen im JSX unveraendert und werden trotzdem dark-mode-fest.
-  const PRIMARY = colors.accent;
-  const TEXT = colors.text;
-  const TEXT_MUTED = colors.textMuted;
-  const RESERVE_COLOR = colors.warning;
-  const DELETE_COLOR = colors.danger;
-  const STATUS_COLORS: Partial<Record<MealStatus, string>> = {
-    planned: colors.success,
-    wish: colors.accent,
-  };
+  const { width } = useWindowDimensions();
   const [entries, setEntries] = useState<MealPlanEntry[]>([]);
-  const [weekBase, setWeekBase] = useState(new Date());
+  const current = useRef(entries);
+  const [reserve, setReserve] = useState<Reserve[]>([]);
+  const reserveRef = useRef(reserve);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const revision = useRef(0);
+  const [base, setBase] = useState(new Date());
+  const [panel, setPanel] = useState<'entry' | 'recipe' | 'reserve' | 'newReserve' | 'calendar' | null>(null);
+  const [editing, setEditing] = useState<MealPlanEntry | null>(null);
+  const [date, setDate] = useState(iso(new Date()));
+  const [slot, setSlot] = useState<MealSlot>('dinner');
+  const [title, setTitle] = useState('');
+  const [notes, setNotes] = useState('');
+  const [status, setStatus] = useState<MealStatus>('planned');
+  const [recipeId, setRecipeId] = useState<string | undefined>();
+  const [multiple, setMultiple] = useState(false);
+  const [assignments, setAssignments] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const [calendarTarget, setCalendarTarget] = useState<'week' | 'entry'>('week');
+  const [month, setMonth] = useState(new Date());
+  const [jumpDate, setJumpDate] = useState('');
+  const [reserveTitle, setReserveTitle] = useState('');
+  const [reserveNotes, setReserveNotes] = useState('');
+  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [reserveList, setReserveList] = useState<ReserveEntry[]>([]);
+  const snackbar = useSnackbar(88);
 
-  // Modal: Eintrag
-  const [entryModalVisible, setEntryModalVisible] = useState(false);
-  const [formDate, setFormDate] = useState('');
-  const [formSlot, setFormSlot] = useState<MealSlot>('lunch');
-  const [formTitle, setFormTitle] = useState('');
-  const [formStatus, setFormStatus] = useState<MealStatus>('planned');
-  const [formNotes, setFormNotes] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  // Modal: Reserve verwalten
-  const [reserveManageVisible, setReserveManageVisible] = useState(false);
-  const [newReserveTitle, setNewReserveTitle] = useState('');
-  const [newReserveNotes, setNewReserveNotes] = useState('');
-
-  // Modal: Aus Reserve auswählen
-  const [pickReserveVisible, setPickReserveVisible] = useState(false);
-  const [pickContext, setPickContext] = useState<{ date: string; slot: MealSlot } | null>(null);
-
-  // Modal: Mehrere Slots auf einmal
-  const [multiModalVisible, setMultiModalVisible] = useState(false);
-  const [multiTitle, setMultiTitle] = useState('');
-  const [multiStatus, setMultiStatus] = useState<MealStatus>('planned');
-  const [multiNotes, setMultiNotes] = useState('');
-  const [multiSelections, setMultiSelections] = useState<Set<string>>(new Set());
-  const [multiReservePickVisible, setMultiReservePickVisible] = useState(false);
-  const [calendarVisible, setCalendarVisible] = useState(false);
-  const [calMonth, setCalMonth] = useState(new Date());
-  const [deleteConfirmEntryId, setDeleteConfirmEntryId] = useState<string | null>(null);
-
-  const days = getWeekDays(weekBase);
-  const weekFrom = toISO(days[0]);
-  const weekTo = toISO(days[6]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadEntries();
-      loadReserveList();
-    }, [weekFrom, weekTo])
-  );
-
-  async function loadEntries() {
+  const apply = (next: MealPlanEntry[]) => { current.current = next; setEntries(next); };
+  const applyReserve = (next: Reserve[]) => { reserveRef.current = next; setReserve(next); };
+  async function cacheEntries(next: MealPlanEntry[]) { apply(next); await AsyncStorage.setItem('@mealplan', JSON.stringify(next)); }
+  async function cacheReserve(next: Reserve[]) { applyReserve(next); await AsyncStorage.setItem('@meal_reserve', JSON.stringify(next)); }
+  const load = useCallback(async (isAlive: () => boolean = () => true) => {
+    const before = revision.current;
     setLoading(true);
     try {
-      const serverData = await ApiService.fetchMealPlan(weekFrom, weekTo);
-      if (serverData && serverData.length >= 0) {
-        setEntries(serverData);
-        await AsyncStorage.setItem('@mealplan', JSON.stringify(serverData));
-      } else {
-        const local = await AsyncStorage.getItem('@mealplan');
-        if (local) setEntries(JSON.parse(local));
-      }
-    } catch {
-      const local = await AsyncStorage.getItem('@mealplan');
-      if (local) setEntries(JSON.parse(local));
-    } finally {
-      setLoading(false);
-    }
+      const [local, localReserve, localRecipes] = await AsyncStorage.multiGet(['@mealplan', '@meal_reserve', '@recipes']);
+      if (!isAlive()) return;
+      apply(local[1] ? JSON.parse(local[1]) : []);
+      applyReserve(localReserve[1] ? JSON.parse(localReserve[1]) : []);
+      setRecipes(localRecipes[1] ? JSON.parse(localRecipes[1]) : []);
+      const results = await Promise.allSettled([
+        (async () => {
+          const remote = await ApiService.fetchMealPlan();
+          if (isAlive() && revision.current === before) await cacheEntries(remote);
+        })(),
+        (async () => {
+          const remote = await ApiService.fetchMealReserve();
+          if (isAlive() && revision.current === before) await cacheReserve(remote);
+        })(),
+      ]);
+      if (isAlive()) setLoadError(results.some(result => result.status === 'rejected'));
+    } catch { if (isAlive()) setLoadError(true); }
+    finally { if (isAlive()) setLoading(false); }
+  }, []);
+  useFocusEffect(useCallback(() => {
+    let alive = true; void load(() => alive);
+    return () => { alive = false; };
+  }, [load]));
+  useEffect(() => {
+    const unsubscribe = [
+      ApiService.subscribe('mealPlan', apply), ApiService.subscribe('mealReserve', applyReserve), ApiService.subscribe('recipes', setRecipes),
+    ];
+    return () => unsubscribe.forEach(fn => fn());
+  }, []);
+  function openEntry(day = iso(new Date()), entry?: MealPlanEntry, idea?: Reserve) {
+    setEditing(entry || null); setDate(entry?.date || day); setSlot(entry?.slot || 'dinner');
+    setTitle(entry?.title || idea?.title || ''); setNotes(entry?.notes || idea?.notes || '');
+    setStatus(entry?.status === 'wish' ? 'wish' : 'planned'); setRecipeId(entry?.recipeId);
+    setMultiple(false); setAssignments([]); setError(''); setPanel('entry');
   }
-
-  async function loadReserveList() {
-    try {
-      const serverData = await ApiService.fetchMealReserve();
-      setReserveList(serverData);
-      await AsyncStorage.setItem('@meal_reserve', JSON.stringify(serverData));
-    } catch {
-      const local = await AsyncStorage.getItem('@meal_reserve');
-      if (local) setReserveList(JSON.parse(local));
-    }
+  function calendar(target: 'week' | 'entry') {
+    const initial = target === 'entry' ? parseDate(date) || new Date() : base;
+    setMonth(initial); setJumpDate(iso(initial)); setCalendarTarget(target); setError(''); setPanel('calendar');
   }
-
-  async function addReserveEntry() {
-    if (!newReserveTitle.trim()) return;
-    const created = await ApiService.createMealReserveEntry(
-      newReserveTitle.trim(),
-      newReserveNotes.trim() || undefined
-    );
-    if (created) {
-      const updated = [...reserveList, created];
-      setReserveList(updated);
-      await AsyncStorage.setItem('@meal_reserve', JSON.stringify(updated));
-    }
-    setNewReserveTitle('');
-    setNewReserveNotes('');
+  function chooseDate(value: string) {
+    const parsed = parseDate(value);
+    if (!parsed) { setError('Bitte ein gültiges Datum im Format JJJJ-MM-TT eingeben.'); return; }
+    if (calendarTarget === 'week') { setBase(parsed); setPanel(null); }
+    else { setDate(value); setAssignments([]); setPanel('entry'); }
+    setError('');
   }
-
-  async function deleteReserveEntry(id: string) {
-    await ApiService.deleteMealReserveEntry(id);
-    const updated = reserveList.filter(r => r.id !== id);
-    setReserveList(updated);
-    await AsyncStorage.setItem('@meal_reserve', JSON.stringify(updated));
-  }
-
-  function openPickReserve(date: string, slot: MealSlot) {
-    if (reserveList.length === 0) {
-      Alert.alert('Reserve leer', 'Füge zuerst Gerichte zur Reserve hinzu (oben auf "Reserve" tippen).');
-      return;
-    }
-    setPickContext({ date, slot });
-    setPickReserveVisible(true);
-  }
-
-  async function insertFromReserve(reserve: ReserveEntry) {
-    if (!pickContext) return;
-    try {
-      await ApiService.createMealPlanEntry({
-        date: pickContext.date,
-        slot: pickContext.slot,
-        title: reserve.title,
-        status: 'planned',
-        notes: reserve.notes,
-      });
-      setPickReserveVisible(false);
-      setPickContext(null);
-      await loadEntries();
-    } catch {
-      Alert.alert('Fehler', 'Eintrag konnte nicht erstellt werden.');
-    }
-  }
-
-  function openNewEntry(date: string, slot: MealSlot) {
-    setFormDate(date);
-    setFormSlot(slot);
-    setFormTitle('');
-    setFormStatus('planned');
-    setFormNotes('');
-    setEditingId(null);
-    setEntryModalVisible(true);
-  }
-
-  function openEditEntry(entry: MealPlanEntry) {
-    setFormDate(entry.date);
-    setFormSlot(entry.slot);
-    setFormTitle(entry.title);
-    setFormStatus(entry.status === 'reserve' ? 'planned' : entry.status);
-    setFormNotes(entry.notes || '');
-    setEditingId(entry.id);
-    setEntryModalVisible(true);
-  }
-
   async function saveEntry() {
-    if (!formTitle.trim()) {
-      Alert.alert('Fehler', 'Bitte einen Namen eingeben.');
-      return;
-    }
+    if (!title.trim() || busy) return;
+    if (!parseDate(date)) { setError('Bitte ein gültiges Datum wählen.'); return; }
+    if (multiple && !assignments.length) { setError('Wähle mindestens eine Mahlzeit aus.'); return; }
+    setBusy(true); setError(''); revision.current++;
+    let saved = 0;
     try {
-      if (editingId) {
-        await ApiService.updateMealPlanEntry(editingId, {
-          title: formTitle.trim(),
-          slot: formSlot,
-          date: formDate,
-          status: formStatus,
-          notes: formNotes.trim() || undefined,
-        });
+      const data = { date, slot, title: title.trim(), notes: notes.trim(), status, recipeId: recipeId || '' };
+      if (editing) {
+        const updated = await ApiService.updateMealPlanEntry(editing.id, data);
+        await cacheEntries(current.current.map(entry => entry.id === updated.id ? updated : entry));
+        saved++;
       } else {
-        await ApiService.createMealPlanEntry({
-          date: formDate,
-          slot: formSlot,
-          title: formTitle.trim(),
-          status: formStatus,
-          notes: formNotes.trim() || undefined,
-        });
+        const targets = multiple ? [...assignments] : [date + ':' + slot];
+        for (const target of targets) {
+          const [targetDate, targetSlot] = target.split(':');
+          const created = await ApiService.createMealPlanEntry({ ...data, date: targetDate, slot: targetSlot as MealSlot });
+          await cacheEntries([...current.current.filter(entry => entry.id !== created.id), created]);
+          saved++;
+          // Successful assignments disappear from the draft, so retrying only
+          // sends remaining meals after a partial failure.
+          setAssignments(previous => previous.filter(value => value !== target));
+        }
       }
-      setEntryModalVisible(false);
-      await loadEntries();
+      setPanel(null);
+      snackbar.show({ text: editing ? 'Mahlzeit aktualisiert' : saved === 1 ? 'Mahlzeit geplant' : saved + ' Mahlzeiten geplant' });
     } catch {
-      Alert.alert('Fehler', 'Eintrag konnte nicht gespeichert werden.');
-    }
+      setError((saved ? (saved === 1 ? 'Eine Mahlzeit gespeichert. ' : saved + ' Mahlzeiten gespeichert. ') + 'Die übrige Auswahl bleibt erhalten. ' : 'Speichern fehlgeschlagen. Deine Eingabe bleibt erhalten. ') + 'Prüfe die Verbindung und versuche es erneut.');
+    } finally { setBusy(false); revision.current++; }
   }
-
-  async function deleteEntry(id: string) {
-    setDeleteConfirmEntryId(id);
-  }
-
-  function entriesForDaySlot(date: string, slot: MealSlot): MealPlanEntry[] {
-    return entries.filter(e => e.date === date && e.slot === slot);
-  }
-
-  function toggleMultiSelection(date: string, slot: MealSlot) {
-    const key = `${date}:${slot}`;
-    setMultiSelections(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function openMultiEntry() {
-    setMultiTitle('');
-    setMultiStatus('planned');
-    setMultiNotes('');
-    setMultiSelections(new Set());
-    setMultiModalVisible(true);
-  }
-
-  async function saveMultiEntry() {
-    if (!multiTitle.trim()) {
-      Alert.alert('Fehler', 'Bitte einen Namen eingeben.');
-      return;
-    }
-    if (multiSelections.size === 0) {
-      Alert.alert('Fehler', 'Bitte mindestens einen Tag & eine Mahlzeit auswählen.');
-      return;
-    }
+  async function removeEntry(entry: MealPlanEntry) {
+    if (busy) return;
+    setBusy(true); setError(''); revision.current++;
     try {
-      const promises = Array.from(multiSelections).map(key => {
-        const [date, slot] = key.split(':') as [string, MealSlot];
-        return ApiService.createMealPlanEntry({
-          date,
-          slot,
-          title: multiTitle.trim(),
-          status: multiStatus,
-          notes: multiNotes.trim() || undefined,
-        });
-      });
-      await Promise.all(promises);
-      setMultiModalVisible(false);
-      await loadEntries();
-    } catch {
-      Alert.alert('Fehler', 'Einträge konnten nicht gespeichert werden.');
-    }
+      await ApiService.deleteMealPlanEntry(entry.id);
+      await cacheEntries(current.current.filter(value => value.id !== entry.id));
+      setPanel(null);
+      snackbar.show({ text: 'Mahlzeit entfernt', action: 'Rückgängig', onAction: async () => {
+        revision.current++;
+        const restored = await ApiService.createMealPlanEntry({ date: entry.date, slot: entry.slot, title: entry.title, status: entry.status, notes: entry.notes, recipeId: entry.recipeId });
+        await cacheEntries([...current.current, restored]); revision.current++;
+      } });
+    } catch { setError('Entfernen fehlgeschlagen. Die Mahlzeit bleibt erhalten.'); }
+    finally { setBusy(false); revision.current++; }
+  }
+  async function addReserve() {
+    if (!reserveTitle.trim() || busy) return;
+    setBusy(true); setError(''); revision.current++;
+    try {
+      const created = await ApiService.createMealReserveEntry(reserveTitle.trim(), reserveNotes.trim());
+      await cacheReserve([...reserveRef.current, created]); setPanel('reserve'); setReserveTitle(''); setReserveNotes('');
+    } catch { setError('Merken fehlgeschlagen. Deine Eingabe bleibt erhalten. Bitte erneut versuchen.'); }
+    finally { setBusy(false); revision.current++; }
+  }
+  async function removeReserve(entry: Reserve) {
+    if (busy) return;
+    setBusy(true); setError(''); revision.current++;
+    try {
+      await ApiService.deleteMealReserveEntry(entry.id);
+      await cacheReserve(reserveRef.current.filter(value => value.id !== entry.id));
+      setPanel(null);
+      snackbar.show({ text: 'Gericht aus „Für später“ entfernt', action: 'Rückgängig', onAction: async () => {
+        revision.current++;
+        const restored = await ApiService.createMealReserveEntry(entry.title, entry.notes);
+        await cacheReserve([...reserveRef.current, restored]); revision.current++;
+      } });
+    } catch { setError('Entfernen fehlgeschlagen. Das Gericht bleibt erhalten.'); }
+    finally { setBusy(false); revision.current++; }
   }
 
-  const todayISO = toISO(new Date());
+  const days = weekDays(base);
+  const today = iso(new Date());
+  const weekTitle = days[0].toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }) + ' – ' + days[6].toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  const thisWeek = days.some(day => iso(day) === today);
+  const formDays = weekDays(parseDate(date) || base);
+  const monthFirst = new Date(month.getFullYear(), month.getMonth(), 1, 12);
+  const offset = (monthFirst.getDay() + 6) % 7;
+  const monthLength = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const calendarCells = Array.from({ length: Math.ceil((offset + monthLength) / 7) * 7 }, (_, index) => index < offset || index >= offset + monthLength ? null : new Date(month.getFullYear(), month.getMonth(), index - offset + 1, 12));
+  const filteredRecipes = recipes.filter(recipe => recipe.name.toLocaleLowerCase('de-DE').includes(search.toLocaleLowerCase('de-DE')));
+  const calendarWidth = Math.max(336, width - 16);
 
-  return (
-    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
-
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity
-          onPress={() => { const d = new Date(weekBase); d.setDate(d.getDate() - 7); setWeekBase(d); }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="chevron-back" size={22} color={colors.text} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => { setCalMonth(new Date(weekBase)); setCalendarVisible(true); }}>
-          <View style={styles.headerDateBtn}>
-            <Ionicons name="calendar-outline" size={13} color={PRIMARY} style={{ marginRight: 5 }} />
-            <Text style={styles.headerTitle}>
-              {days[0].toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })} –{' '}
-              {days[6].toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </Text>
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => { const d = new Date(weekBase); d.setDate(d.getDate() + 7); setWeekBase(d); }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="chevron-forward" size={22} color={colors.text} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Reserve-Leiste */}
-      <TouchableOpacity style={[styles.reserveBar, { backgroundColor: colors.surface }]} onPress={() => setReserveManageVisible(true)} activeOpacity={0.75}>
-        <View style={styles.reserveBarLeft}>
-          <Ionicons name="archive-outline" size={15} color={RESERVE_COLOR} />
-          <Text style={styles.reserveBarText}>Reserve</Text>
-          {reserveList.length > 0 && (
-            <View style={styles.reserveBadge}>
-              <Text style={styles.reserveBadgeText}>{reserveList.length}</Text>
-            </View>
-          )}
-        </View>
-        <Text style={styles.reserveBarHint}>Verwalten</Text>
-      </TouchableOpacity>
-
-      {loading && <ActivityIndicator color={PRIMARY} style={{ marginVertical: 6 }} />}
-
-      {/* Wochentage */}
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 80, paddingTop: 8 }}
-      >
-        {days.map(day => {
-          const iso = toISO(day);
-          const isToday = iso === todayISO;
-          return (
-            <View key={iso} style={[styles.dayCard, { backgroundColor: colors.surface }, isToday && styles.todayCard]}>
-              <Text style={[styles.dayLabel, isToday && styles.todayLabel]}>
-                {formatDay(day)}{isToday ? ' · Heute' : ''}
-              </Text>
-              {SLOTS.map(slot => {
-                const slotEntries = entriesForDaySlot(iso, slot);
-                return (
-                  <View key={slot} style={styles.slotRow}>
-                    <View style={styles.slotHeader}>
-                      <Ionicons name={SLOT_ICONS[slot]} size={13} color={TEXT_MUTED} style={{ marginRight: 4 }} />
-                      <Text style={styles.slotLabel}>{SLOT_LABELS[slot]}</Text>
-                      <TouchableOpacity
-                        onPress={() => openPickReserve(iso, slot)}
-                        style={styles.slotBtn}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons name="archive-outline" size={14} color={RESERVE_COLOR} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => openNewEntry(iso, slot)}
-                        style={styles.slotBtn}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons name="add" size={18} color={PRIMARY} />
-                      </TouchableOpacity>
-                    </View>
-                    {slotEntries.map(entry => (
-                      <TouchableOpacity
-                        key={entry.id}
-                        style={[styles.entryChip, { borderLeftColor: STATUS_COLORS[entry.status] ?? RESERVE_COLOR }]}
-                        onPress={() => openEditEntry(entry)}
-                        onLongPress={() => deleteEntry(entry.id)}
-                        activeOpacity={0.75}
-                      >
-                        <View style={styles.entryChipRow}>
-                          <Text style={styles.entryTitle} numberOfLines={1}>{entry.title}</Text>
-                          <View style={[styles.statusPill, { backgroundColor: (STATUS_COLORS[entry.status] ?? RESERVE_COLOR) + '18' }]}>
-                            <Text style={[styles.statusPillText, { color: STATUS_COLORS[entry.status] ?? RESERVE_COLOR }]}>
-                              {STATUS_LABELS[entry.status] ?? 'Reserve'}
-                            </Text>
-                          </View>
-                        </View>
-                        {entry.notes ? <Text style={styles.entryNotes} numberOfLines={1}>{entry.notes}</Text> : null}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                );
-              })}
-            </View>
-          );
-        })}
-      </ScrollView>
-
-      {/* FAB: Gericht für mehrere Tage */}
-      <TouchableOpacity
-        style={[styles.fab, { bottom: 20 }]}
-        onPress={openMultiEntry}
-        activeOpacity={0.85}
-      >
-        <Ionicons name="add" size={28} color={colors.onAccent} />
-      </TouchableOpacity>
-
-      {/* ── Modal: Woche wählen ── */}
-      <Modal visible={calendarVisible} animationType="fade" transparent onRequestClose={() => setCalendarVisible(false)}>
-        <View style={styles.overlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setCalendarVisible(false)} />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 20, backgroundColor: colors.sheetBg }]}>
-            <View style={styles.sheetHandle} />
-
-            {/* Monat-Navigation */}
-            <View style={styles.calMonthRow}>
-              <TouchableOpacity
-                onPress={() => setCalMonth(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="chevron-back" size={20} color={colors.text} />
-              </TouchableOpacity>
-              <Text style={[styles.calMonthTitle, { color: colors.text }]}>
-                {calMonth.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setCalMonth(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="chevron-forward" size={20} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Wochentag-Labels */}
-            <View style={styles.calWeekRow}>
-              {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(wl => (
-                <Text key={wl} style={[styles.calWeekLabel, { color: colors.textMuted }]}>{wl}</Text>
-              ))}
-            </View>
-
-            {/* Kalender-Grid */}
-            {(() => {
-              const cells = getCalendarCells(calMonth);
-              const rows: (Date | null)[][] = [];
-              for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
-              const selMonISO = toISO(getWeekDays(weekBase)[0]);
-              const selSunISO = toISO(getWeekDays(weekBase)[6]);
-              return rows.map((row, ri) => {
-                const rowSelected = row.some(c => c && toISO(c) >= selMonISO && toISO(c) <= selSunISO);
-                return (
-                  <View key={ri} style={[styles.calRow, rowSelected && styles.calRowSelected]}>
-                    {row.map((cell, ci) => {
-                      const isTodayCell = !!cell && toISO(cell) === todayISO;
-                      const inMonth = !!cell && cell.getMonth() === calMonth.getMonth();
-                      const inSelWeek = !!cell && toISO(cell) >= selMonISO && toISO(cell) <= selSunISO;
-                      return (
-                        <TouchableOpacity
-                          key={ci}
-                          style={styles.calCell}
-                          onPress={() => {
-                            if (!cell) return;
-                            setWeekBase(new Date(cell));
-                            setCalendarVisible(false);
-                          }}
-                          activeOpacity={cell ? 0.6 : 1}
-                        >
-                          {cell ? (
-                            <View style={[styles.calDayInner, isTodayCell && styles.calDayTodayBg]}>
-                              <Text style={[
-                                styles.calDayText,
-                                { color: inMonth ? colors.text : colors.textMuted },
-                                isTodayCell && styles.calDayTodayText,
-                                inSelWeek && inMonth && !isTodayCell && { color: PRIMARY, fontWeight: '700' },
-                              ]}>
-                                {cell.getDate()}
-                              </Text>
-                            </View>
-                          ) : null}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                );
-              });
-            })()}
-
-            {/* Aktuelle Woche */}
-            <TouchableOpacity
-              style={styles.calTodayBtn}
-              onPress={() => { setWeekBase(new Date()); setCalendarVisible(false); }}
-            >
-              <Ionicons name="today-outline" size={14} color={PRIMARY} style={{ marginRight: 6 }} />
-              <Text style={styles.calTodayBtnText}>Aktuelle Woche</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Modal: Neuer / Bearbeiten ── */}
-      <Modal visible={entryModalVisible} animationType="slide" transparent onRequestClose={() => setEntryModalVisible(false)}>
-        <KeyboardAvoidingView style={styles.overlay} behavior="padding" keyboardVerticalOffset={0}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setEntryModalVisible(false)} />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16, backgroundColor: colors.sheetBg }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>{editingId ? 'Eintrag bearbeiten' : 'Neuer Eintrag'}</Text>
-
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
-              value={formTitle}
-              onChangeText={setFormTitle}
-              placeholder="Gericht eingeben..."
-              placeholderTextColor={colors.textMuted}
-              autoFocus
-            />
-
-            <Text style={styles.fieldLabel}>Mahlzeit</Text>
-            <View style={styles.segmentRow}>
-              {SLOTS.map(s => (
-                <TouchableOpacity
-                  key={s}
-                  style={[styles.segment, formSlot === s && styles.segmentActive]}
-                  onPress={() => setFormSlot(s)}
-                >
-                  <Text style={[styles.segmentText, formSlot === s && styles.segmentTextActive]}>
-                    {SLOT_LABELS[s]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.fieldLabel}>Status</Text>
-            <View style={styles.segmentRow}>
-              {ENTRY_STATUSES.map(st => (
-                <TouchableOpacity
-                  key={st}
-                  style={[styles.segment, formStatus === st && {
-                    borderColor: STATUS_COLORS[st] ?? PRIMARY,
-                    backgroundColor: (STATUS_COLORS[st] ?? PRIMARY) + '18',
-                  }]}
-                  onPress={() => setFormStatus(st)}
-                >
-                  <Text style={[styles.segmentText, formStatus === st && { color: STATUS_COLORS[st] ?? PRIMARY }]}>
-                    {STATUS_LABELS[st]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.fieldLabel}>Notizen (optional)</Text>
-            <TextInput
-              style={[styles.input, { minHeight: 56, textAlignVertical: 'top' }]}
-              value={formNotes}
-              onChangeText={setFormNotes}
-              placeholder="Zutaten, Hinweise..."
-              placeholderTextColor={TEXT_MUTED}
-              multiline
-            />
-
-            <View style={styles.modalActions}>
-              {editingId && (
-                <TouchableOpacity
-                  style={styles.deleteBtn}
-                  onPress={() => { setEntryModalVisible(false); deleteEntry(editingId!); }}
-                >
-                  <Ionicons name="trash-outline" size={18} color={DELETE_COLOR} />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity style={styles.saveBtn} onPress={saveEntry}>
-                <Text style={styles.saveBtnText}>Speichern</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ── Modal: Reserve verwalten ── */}
-      <Modal visible={reserveManageVisible} animationType="slide" transparent onRequestClose={() => setReserveManageVisible(false)}>
-        <View style={styles.overlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setReserveManageVisible(false)} />
-          <View style={[styles.sheet, styles.sheetTall, { paddingBottom: insets.bottom + 16, backgroundColor: colors.sheetBg }]}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeaderRow}>
-              <Ionicons name="archive-outline" size={18} color={RESERVE_COLOR} style={{ marginRight: 6 }} />
-              <Text style={[styles.sheetTitle, { color: colors.text }]}>Reserve-Liste</Text>
-            </View>
-
-            <View style={styles.reserveAddRow}>
-              <TextInput
-                style={[styles.input, { flex: 1, marginRight: 8, backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
-                value={newReserveTitle}
-                onChangeText={setNewReserveTitle}
-                placeholder="Gericht hinzufügen..."
-                placeholderTextColor={colors.textMuted}
-                onSubmitEditing={addReserveEntry}
-                returnKeyType="done"
-              />
-              <TouchableOpacity
-                style={[styles.addReserveBtn, !newReserveTitle.trim() && { opacity: 0.4 }]}
-                onPress={addReserveEntry}
-                disabled={!newReserveTitle.trim()}
-              >
-                <Ionicons name="add" size={20} color={colors.onAccent} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
-              {reserveList.length === 0 ? (
-                <View style={styles.emptyBox}>
-                  <Ionicons name="archive-outline" size={40} color={TEXT_MUTED} style={{ marginBottom: 8 }} />
-                  <Text style={styles.emptyText}>Noch keine Gerichte gespeichert</Text>
-                </View>
-              ) : reserveList.map(r => (
-                <View key={r.id} style={styles.reserveItem}>
-                  <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={styles.reserveItemTitle}>{r.title}</Text>
-                    {r.notes ? <Text style={styles.reserveItemNotes}>{r.notes}</Text> : null}
-                  </View>
-                  <TouchableOpacity onPress={() => deleteReserveEntry(r.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Ionicons name="trash-outline" size={17} color={TEXT_MUTED} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Modal: Aus Reserve auswählen ── */}
-      <Modal visible={pickReserveVisible} animationType="slide" transparent onRequestClose={() => setPickReserveVisible(false)}>
-        <View style={styles.overlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setPickReserveVisible(false)} />
-          <View style={[styles.sheet, styles.sheetTall, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeaderRow}>
-              <Ionicons name="archive-outline" size={18} color={RESERVE_COLOR} style={{ marginRight: 6 }} />
-              <Text style={[styles.sheetTitle, { color: colors.text }]}>Aus Reserve wählen</Text>
-              {pickContext && (
-                <Text style={styles.pickSlotLabel}>{SLOT_LABELS[pickContext.slot]}</Text>
-              )}
-            </View>
-            <ScrollView style={{ maxHeight: 350 }} showsVerticalScrollIndicator={false}>
-              {reserveList.map(r => (
-                <TouchableOpacity
-                  key={r.id}
-                  style={styles.pickItem}
-                  onPress={() => insertFromReserve(r)}
-                  activeOpacity={0.75}
-                >
-                  <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={styles.reserveItemTitle}>{r.title}</Text>
-                    {r.notes ? <Text style={styles.reserveItemNotes}>{r.notes}</Text> : null}
-                  </View>
-                  <Ionicons name="add-circle-outline" size={22} color={PRIMARY} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Modal: Gericht für mehrere Tage ── */}
-      <Modal visible={multiModalVisible} animationType="slide" transparent onRequestClose={() => setMultiModalVisible(false)}>
-        <KeyboardAvoidingView style={styles.overlay} behavior="padding" keyboardVerticalOffset={0}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setMultiModalVisible(false)} />
-          <View style={[styles.sheet, styles.sheetTall, { paddingBottom: insets.bottom + 16, backgroundColor: colors.sheetBg }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>Gericht für mehrere Slots</Text>
-
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            {/* Titel-Zeile inkl. Reserve-Button */}
-            <View style={styles.titleRow}>
-              <TextInput
-              style={[styles.input, { flex: 1, backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
-              value={multiTitle}
-              onChangeText={setMultiTitle}
-              placeholder="Gericht eingeben..."
-              placeholderTextColor={colors.textMuted}
-                autoFocus
-              />
-              <TouchableOpacity
-                style={styles.reservePickBtn}
-                onPress={() => setMultiReservePickVisible(true)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="archive-outline" size={16} color={RESERVE_COLOR} />
-                <Text style={styles.reservePickBtnText}>Reserve</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.fieldLabel}>Status</Text>
-            <View style={styles.segmentRow}>
-              {ENTRY_STATUSES.map(st => (
-                <TouchableOpacity
-                  key={st}
-                  style={[styles.segment, multiStatus === st && {
-                    borderColor: STATUS_COLORS[st] ?? PRIMARY,
-                    backgroundColor: (STATUS_COLORS[st] ?? PRIMARY) + '18',
-                  }]}
-                  onPress={() => setMultiStatus(st)}
-                >
-                  <Text style={[styles.segmentText, multiStatus === st && { color: STATUS_COLORS[st] ?? PRIMARY }]}>
-                    {STATUS_LABELS[st]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.fieldLabel}>Tage & Mahlzeiten wählen</Text>
-
-            {/* Grid-Header */}
-            <View style={styles.gridHeader}>
-              <View style={{ width: 70 }} />
-              {SLOTS.map(s => (
-                <View key={s} style={styles.gridHeaderCell}>
-                  <Ionicons name={SLOT_ICONS[s]} size={11} color={TEXT_MUTED} />
-                  <Text style={styles.gridHeaderText}>{SLOT_LABELS[s].slice(0, 5)}</Text>
-                </View>
-              ))}
-            </View>
-
-            <ScrollView style={{ maxHeight: 230 }} showsVerticalScrollIndicator={false} scrollEnabled={false} nestedScrollEnabled={false}>
-              {days.map(day => {
-                const iso = toISO(day);
-                const isToday = iso === todayISO;
-                const dayColor = isToday ? colors.accent : colors.borderStrong;
-                const rowHasSelection = SLOTS.some(s => multiSelections.has(`${iso}:${s}`));
-                return (
-                  <View
-                    key={iso}
-                    style={[
-                      styles.gridRow,
-                      { borderLeftWidth: 3, borderLeftColor: rowHasSelection ? colors.accent : dayColor },
-                      rowHasSelection && { backgroundColor: colors.accentSurface },
-                    ]}
-                  >
-            <Text style={[styles.gridDayLabel, { color: isToday ? dayColor : colors.text }, isToday && { fontWeight: '700' }]}>
-                      {day.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })}
-                    </Text>
-                    {SLOTS.map(slot => {
-                      const key = `${iso}:${slot}`;
-                      const selected = multiSelections.has(key);
-                      return (
-                        <TouchableOpacity
-                          key={slot}
-                          style={[
-                            styles.gridCell,
-                            selected && styles.gridCellActive,
-                          ]}
-                          onPress={() => toggleMultiSelection(iso, slot)}
-                          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                        >
-                          {selected
-                            ? <Ionicons name="checkmark" size={15} color={dayColor} />
-                            : <View style={styles.gridCellDot} />
-                          }
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.multiSelCountRow}>
-              <Text style={styles.multiSelCount}>
-                {multiSelections.size === 0
-                  ? 'Noch keine Auswahl'
-                  : `${multiSelections.size} Slot${multiSelections.size !== 1 ? 's' : ''} ausgewählt`
-                }
-              </Text>
-            </View>
-
-            <TextInput
-              style={[styles.input, { minHeight: 48, textAlignVertical: 'top', marginTop: 10 }]}
-              value={multiNotes}
-              onChangeText={setMultiNotes}
-              placeholder="Notizen (optional)..."
-              placeholderTextColor={TEXT_MUTED}
-              multiline
-            />
-
-            <TouchableOpacity
-              style={[styles.saveBtn, { marginTop: 14 }, multiSelections.size === 0 && { opacity: 0.4 }]}
-              onPress={saveMultiEntry}
-              disabled={multiSelections.size === 0}
-            >
-              <Text style={styles.saveBtnText}>
-                {multiSelections.size > 1
-                  ? `${multiSelections.size}× Eintragen`
-                  : 'Eintragen'
-                }
-              </Text>
-            </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ── Mini-Modal: Aus Reserve für Multi-Entry ── */}
-      <Modal visible={multiReservePickVisible} animationType="slide" transparent onRequestClose={() => setMultiReservePickVisible(false)}>
-        <View style={styles.overlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setMultiReservePickVisible(false)} />
-          <View style={[styles.sheet, styles.sheetTall, { paddingBottom: insets.bottom + 16, backgroundColor: colors.sheetBg }]}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeaderRow}>
-              <Ionicons name="archive-outline" size={18} color={RESERVE_COLOR} style={{ marginRight: 6 }} />
-              <Text style={[styles.sheetTitle, { color: colors.text }]}>Gericht aus Reserve</Text>
-            </View>
-            {reserveList.length === 0 ? (
-              <View style={styles.emptyBox}>
-                <Ionicons name="archive-outline" size={40} color={TEXT_MUTED} style={{ marginBottom: 8 }} />
-                <Text style={styles.emptyText}>Reserve ist leer</Text>
-              </View>
-            ) : (
-              <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-                {reserveList.map(r => (
-                  <TouchableOpacity
-                    key={r.id}
-                    style={styles.pickItem}
-                    activeOpacity={0.75}
-                    onPress={() => {
-                      setMultiTitle(r.title);
-                      if (r.notes) setMultiNotes(r.notes);
-                      setMultiReservePickVisible(false);
-                    }}
-                  >
-                    <View style={{ flex: 1, marginRight: 10 }}>
-                      <Text style={styles.reserveItemTitle}>{r.title}</Text>
-                      {r.notes ? <Text style={styles.reserveItemNotes}>{r.notes}</Text> : null}
-                    </View>
-                    <Ionicons name="arrow-up-circle-outline" size={22} color={RESERVE_COLOR} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* Delete Confirm Modal */}
-      <Modal visible={deleteConfirmEntryId !== null} animationType="slide" transparent onRequestClose={() => setDeleteConfirmEntryId(null)}>
-        <View style={styles.overlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setDeleteConfirmEntryId(null)} />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={[styles.sheetTitle, { color: TEXT }]}>Eintrag löschen</Text>
-            <Text style={[styles.confirmMsg]}>Eintrag wirklich löschen?</Text>
-            <View style={styles.sheetBtnRow}>
-              <TouchableOpacity style={styles.sheetBtnCancel} onPress={() => setDeleteConfirmEntryId(null)}>
-                <Text style={styles.sheetBtnCancelText}>Abbrechen</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.sheetBtnDelete}
-                onPress={async () => {
-                  const id = deleteConfirmEntryId;
-                  setDeleteConfirmEntryId(null);
-                  if (id) { await ApiService.deleteMealPlanEntry(id); await loadEntries(); }
-                }}
-              >
-                <Text style={styles.sheetBtnDeleteText}>Löschen</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+  return <View style={styles.container}>
+    <ScreenHeader title="Essensplan" subtitle={thisWeek ? 'Deine Woche im Überblick' : 'Woche ab ' + days[0].toLocaleDateString('de-DE')} actions={[
+      { icon: 'settings-outline', accessibilityLabel: 'App-Einstellungen', onPress: () => navigation.navigate('Settings') },
+    ]} />
+    <View style={styles.weekBar}>
+      <IconButton icon="chevron-back" accessibilityLabel="Vorherige Woche" onPress={() => setBase(shift(base, -7))} />
+      <Pressable style={styles.weekTitle} onPress={() => calendar('week')} accessibilityRole="button" accessibilityLabel={weekTitle + ', Datum wählen'}><Text style={styles.weekText}>{weekTitle}</Text><Ionicons name="chevron-down" size={15} color={colors.textSub} /></Pressable>
+      <IconButton icon="chevron-forward" accessibilityLabel="Nächste Woche" onPress={() => setBase(shift(base, 7))} />
     </View>
-  );
+    <View style={styles.tools}>
+      <Button standalone variant={thisWeek ? 'ghost' : 'secondary'} icon="today-outline" onPress={() => setBase(new Date())}>Heute</Button>
+      <Button standalone variant="secondary" icon="bookmark-outline" onPress={() => { setError(''); setPanel('reserve'); }}>{'Für später · ' + reserve.length}</Button>
+    </View>
+    {loadError ? <Notice tone="warning" message="Gespeicherter Stand. Aktualisieren war nicht möglich." action={loading ? 'Lädt …' : 'Erneut laden'} onAction={() => { if (!loading) void load(); }} /> : <SyncNotice />}
+    <ScrollView contentContainerStyle={styles.agenda} showsVerticalScrollIndicator>
+      {days.map(day => {
+        const value = iso(day);
+        const meals = entries.filter(entry => entry.date === value).sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
+        return <View key={value} style={[styles.day, value === today && styles.today]}>
+          <View style={styles.dayHeader}><Text style={[styles.dayName, value === today && { color: colors.accent }]} accessibilityRole="header">{day.toLocaleDateString('de-DE', { weekday: 'long' })}</Text>
+            <Text style={styles.dayDate}>{value === today ? 'Heute · ' : ''}{day.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })}</Text></View>
+          {meals.map(entry => <Pressable key={entry.id} style={styles.meal} onPress={() => openEntry(value, entry)} accessibilityRole="button" accessibilityLabel={entry.title + ', ' + SLOT_LABELS[entry.slot] + ', bearbeiten'}>
+            <Ionicons name={SLOT_ICONS[entry.slot]} size={20} color={colors.textMuted} />
+            <View style={{ flex: 1 }}><Text style={styles.mealTitle}>{entry.title}</Text><Text style={styles.caption}>{SLOT_LABELS[entry.slot]}{entry.status === 'wish' ? ' · Wunsch' : ''}</Text>
+              {!!entry.notes && <Text style={styles.notes} numberOfLines={2}>{entry.notes}</Text>}</View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>)}
+          <Pressable style={styles.addDay} onPress={() => openEntry(value)} accessibilityRole="button" accessibilityLabel={'Gericht für ' + dateLabel(day) + ' planen'}>
+            <Ionicons name="add" size={20} color={colors.accent} /><Text style={styles.addLabel}>{meals.length ? 'Weitere Mahlzeit' : 'Gericht planen'}</Text>
+          </Pressable>
+        </View>;
+      })}
+    </ScrollView>
+    <Fab icon="add" label="Gericht planen" accessibilityLabel="Gericht planen" onPress={() => openEntry(thisWeek ? today : iso(days[0]))} />
+
+    <Sheet visible={panel === 'entry'} onClose={() => { if (!busy) setPanel(null); }} title={editing ? 'Mahlzeit bearbeiten' : 'Gericht planen'}
+      footer={<Button standalone loading={busy} disabled={!title.trim() || (multiple && !assignments.length)} onPress={saveEntry}>
+        {editing ? 'Änderungen speichern' : multiple ? assignments.length + (assignments.length === 1 ? ' Mahlzeit planen' : ' Mahlzeiten planen') : 'Mahlzeit planen'}
+      </Button>}>
+      <Input label="Gericht" value={title} onChangeText={value => { setTitle(value); setRecipeId(undefined); }} placeholder="Was möchtest du essen?" />
+      <ListRow title="Aus meinen Gerichten wählen" icon="restaurant-outline" onPress={() => { setSearch(''); setPanel('recipe'); }} />
+      {recipeId && <ListRow title="Zutaten des Gerichts ansehen" icon="open-outline" onPress={() => {
+        const recipe = recipes.find(value => value.id === recipeId);
+        if (recipe) { setPanel(null); navigation.navigate('RecipesTab', { screen: 'RecipeDetail', params: { recipe } }); }
+      }} />}
+      <ListRow title={dateLabel(parseDate(date) || new Date())} subtitle={multiple ? 'Woche für die Mehrfachauswahl' : 'Datum ändern'} icon="calendar-outline" onPress={() => calendar('entry')} />
+      {!multiple && <View style={styles.wrap}>{SLOTS.map(value => <Chip key={value} label={SLOT_LABELS[value]} selected={slot === value} onPress={() => setSlot(value)} />)}</View>}
+      {!editing && <ListRow title={multiple ? 'Nur eine Mahlzeit planen' : 'Für mehrere Tage planen'} icon={multiple ? 'remove-circle-outline' : 'duplicate-outline'} onPress={() => {
+        setMultiple(!multiple); setAssignments(multiple ? [] : [date + ':' + slot]);
+      }} />}
+      {multiple && <View>
+        <Text style={styles.hint}>Wähle die Mahlzeiten aus. Alle sieben Tage sind hier erreichbar.</Text>
+        {formDays.map(day => <View key={iso(day)} style={styles.multiDay}>
+          <Text style={styles.label} accessibilityRole="header">{dateLabel(day)}</Text>
+          <View style={styles.wrap}>{SLOTS.map(value => {
+            const key = iso(day) + ':' + value;
+            return <Chip key={key} label={SLOT_LABELS[value]} selected={assignments.includes(key)} onPress={() => setAssignments(previous => previous.includes(key) ? previous.filter(item => item !== key) : [...previous, key])} />;
+          })}</View>
+        </View>)}
+      </View>}
+      <Text style={styles.label}>Status</Text>
+      <View style={styles.wrap}><Chip label="Geplant" selected={status === 'planned'} onPress={() => setStatus('planned')} /><Chip label="Wunsch" selected={status === 'wish'} onPress={() => setStatus('wish')} /></View>
+      <Input label="Notiz (optional)" value={notes} onChangeText={setNotes} multiline placeholder="Zum Beispiel: Reste für morgen einplanen" />
+      {!!error && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
+      {editing && <Button standalone variant="ghost" icon="trash-outline" disabled={busy} style={{ marginTop: 8 }} onPress={() => { void removeEntry(editing); }}>Mahlzeit entfernen</Button>}
+    </Sheet>
+    <Sheet visible={panel === 'recipe'} onClose={() => setPanel('entry')} title="Gericht wählen">
+      <Input value={search} onChangeText={setSearch} placeholder="Gerichte durchsuchen" />
+      {filteredRecipes.map(recipe => <ListRow key={recipe.id} title={recipe.name} subtitle={recipe.ingredients.length + ' Zutaten'} icon="restaurant-outline" onPress={() => {
+        setTitle(recipe.name); setRecipeId(recipe.id); setPanel('entry');
+      }} />)}
+      {!filteredRecipes.length && <Text style={styles.hint}>Keine passenden Gerichte. Du kannst den Namen auch selbst eingeben.</Text>}
+      {!!reserve.length && <><Text style={styles.label}>Für später gemerkt</Text>{reserve.filter(entry => entry.title.toLocaleLowerCase('de-DE').includes(search.toLocaleLowerCase('de-DE'))).map(entry => <ListRow key={entry.id} title={entry.title} icon="bookmark-outline" onPress={() => {
+        setTitle(entry.title); setNotes(entry.notes || ''); setRecipeId(undefined); setPanel('entry');
+      }} />)}</>}
+    </Sheet>
+    <Sheet visible={panel === 'reserve'} onClose={() => { if (!busy) setPanel(null); }} title="Für später" subtitle="Ideen ohne festen Termin. Tippe auf ein Gericht, um es einzuplanen.">
+      {reserve.map(entry => <View key={entry.id} style={styles.reserveRow}>
+        <View style={{ flex: 1 }}><ListRow title={entry.title} subtitle={entry.notes} icon="bookmark-outline" onPress={() => { if (!busy) openEntry(thisWeek ? today : iso(days[0]), undefined, entry); }} /></View>
+        <IconButton icon="trash-outline" accessibilityLabel={entry.title + ' aus Für später entfernen'} disabled={busy} onPress={() => { void removeReserve(entry); }} />
+      </View>)}
+      {!reserve.length && <Text style={styles.hint}>Hier ist Platz für deine nächsten Kochideen.</Text>}
+      {!!error && <Text style={styles.error}>{error}</Text>}
+      <Button standalone icon="add" disabled={busy} onPress={() => { setReserveTitle(''); setReserveNotes(''); setError(''); setPanel('newReserve'); }}>Gericht merken</Button>
+    </Sheet>
+    <Sheet visible={panel === 'newReserve'} onClose={() => { if (!busy) setPanel('reserve'); }} title="Gericht für später merken">
+      <Input label="Gericht" value={reserveTitle} onChangeText={setReserveTitle} autoFocus />
+      <Input label="Notiz (optional)" value={reserveNotes} onChangeText={setReserveNotes} multiline containerStyle={{ marginTop: 16 }} />
+      {!!error && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
+      <Button standalone loading={busy} disabled={!reserveTitle.trim()} style={{ marginTop: 16 }} onPress={addReserve}>Merken</Button>
+    </Sheet>
+    <Sheet visible={panel === 'calendar'} onClose={() => setPanel(calendarTarget === 'entry' ? 'entry' : null)} title={calendarTarget === 'week' ? 'Woche auswählen' : 'Datum auswählen'}>
+      <View style={styles.weekBar}><IconButton icon="chevron-back" accessibilityLabel="Vorheriger Monat" onPress={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1, 12))} />
+        <Text style={[styles.weekText, { flex: 1, textAlign: 'center' }]}>{month.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}</Text>
+        <IconButton icon="chevron-forward" accessibilityLabel="Nächster Monat" onPress={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1, 12))} /></View>
+      <ScrollView horizontal style={{ marginHorizontal: -12 }} contentContainerStyle={{ width: calendarWidth }}>
+        <View style={{ width: calendarWidth }}>
+          <View style={styles.calendarRow}>{['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(day => <Text key={day} style={[styles.calendarWeekday, { width: calendarWidth / 7 }]}>{day}</Text>)}</View>
+          <View style={styles.calendarRow}>{calendarCells.map((day, index) => day ? <Pressable key={index} style={[styles.calendarCell, { width: calendarWidth / 7 }, iso(day) === jumpDate && styles.selectedDate]}
+            accessibilityRole="button" accessibilityLabel={dateLabel(day)} accessibilityState={{ selected: iso(day) === jumpDate }} onPress={() => chooseDate(iso(day))}>
+            <Text style={{ color: iso(day) === jumpDate ? colors.onAccent : iso(day) === today ? colors.accent : colors.text, fontSize: 16, fontWeight: iso(day) === today ? '700' : '400' }}>{day.getDate()}</Text>
+          </Pressable> : <View key={index} style={{ width: calendarWidth / 7, minHeight: 48 }} />)}</View>
+        </View>
+      </ScrollView>
+      <Button standalone variant="ghost" onPress={() => chooseDate(today)}>Zu heute</Button>
+      <Input label="Direkt zu einem Datum" placeholder="JJJJ-MM-TT" value={jumpDate} onChangeText={setJumpDate} error={error} />
+      <Button standalone style={{ marginTop: 12 }} onPress={() => chooseDate(jumpDate)}>Datum übernehmen</Button>
+    </Sheet>
+    {snackbar.element}
+  </View>;
 }
-
-const createStyles = (t: Theme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.colors.bg },
-
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: t.spacing.lg,
-      paddingVertical: t.spacing.md,
-      backgroundColor: t.colors.surface,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
-      zIndex: 1,
-    },
-    headerTitle: { ...t.type.heading, color: t.colors.text },
-
-    reserveBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: t.colors.surface,
-      marginHorizontal: t.spacing.md,
-      marginTop: t.spacing.md,
-      paddingHorizontal: t.spacing.lg,
-      paddingVertical: t.spacing.md,
-      borderRadius: t.radius.md,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-    },
-    reserveBarLeft: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
-    reserveBarText: { ...t.type.label, color: t.colors.warning },
-    reserveBarHint: { ...t.type.caption, color: t.colors.textMuted },
-    reserveBadge: {
-      backgroundColor: t.colors.warning,
-      borderRadius: t.radius.pill,
-      minWidth: 20,
-      height: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 5,
-    },
-    reserveBadgeText: { ...t.type.caption, color: t.colors.onAccent },
-
-    dayCard: {
-      backgroundColor: t.colors.surface,
-      borderRadius: t.radius.md,
-      marginTop: t.spacing.md,
-      padding: t.spacing.md,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-    },
-    todayCard: { borderColor: t.colors.accent },
-    dayLabel: { ...t.type.bodyStrong, color: t.colors.text, marginBottom: t.spacing.sm },
-    todayLabel: { color: t.colors.accent },
-
-    slotRow: { marginBottom: t.spacing.xs + 2 },
-    slotHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: t.spacing.xs },
-    slotLabel: { ...t.type.caption, color: t.colors.textMuted, flex: 1 },
-    slotBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
-
-    entryChip: {
-      backgroundColor: t.colors.surfaceAlt,
-      borderRadius: t.radius.sm,
-      borderLeftWidth: 3,
-      paddingHorizontal: t.spacing.md,
-      paddingVertical: t.spacing.sm,
-      marginBottom: t.spacing.xs,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-    },
-    entryChipRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    entryTitle: { ...t.type.label, color: t.colors.text, flex: 1, marginRight: t.spacing.sm },
-    statusPill: { paddingHorizontal: t.spacing.sm, paddingVertical: 2, borderRadius: t.radius.pill },
-    statusPillText: { ...t.type.caption },
-    entryNotes: { ...t.type.caption, color: t.colors.textMuted, marginTop: 2 },
-
-    overlay: { flex: 1, backgroundColor: t.colors.overlay, justifyContent: 'flex-end' },
-    sheet: {
-      backgroundColor: t.colors.sheetBg,
-      borderTopLeftRadius: t.radius.sheet,
-      borderTopRightRadius: t.radius.sheet,
-      paddingHorizontal: t.spacing.xl,
-      paddingTop: t.spacing.md,
-      ...t.elevation.e3,
-    },
-    sheetTall: { maxHeight: '82%' },
-    sheetHandle: {
-      width: 36,
-      height: 4,
-      backgroundColor: t.colors.handle,
-      borderRadius: t.radius.pill,
-      alignSelf: 'center',
-      marginBottom: t.spacing.lg,
-    },
-    sheetHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: t.spacing.lg },
-    sheetTitle: { ...t.type.title, color: t.colors.text, flex: 1 },
-    pickSlotLabel: { ...t.type.label, color: t.colors.accent },
-
-    fieldLabel: {
-      ...t.type.label,
-      color: t.colors.textSub,
-      marginBottom: t.spacing.sm,
-      marginTop: t.spacing.lg,
-    },
-    input: {
-      ...t.type.body,
-      backgroundColor: t.colors.inputBg,
-      color: t.colors.text,
-      borderRadius: t.radius.md,
-      paddingHorizontal: t.spacing.lg,
-      paddingVertical: 13,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      marginTop: t.spacing.xs,
-    },
-    segmentRow: { flexDirection: 'row', gap: t.spacing.sm },
-    segment: {
-      flex: 1,
-      paddingVertical: t.spacing.sm,
-      borderRadius: t.radius.sm,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      alignItems: 'center',
-      backgroundColor: t.colors.surfaceAlt,
-    },
-    segmentActive: { borderColor: t.colors.accent, backgroundColor: t.colors.accentSurface },
-    segmentText: { ...t.type.label, color: t.colors.textMuted },
-    segmentTextActive: { color: t.colors.accent },
-
-    modalActions: { flexDirection: 'row', marginTop: t.spacing.xl, gap: t.spacing.md },
-    deleteBtn: {
-      width: 48,
-      height: 48,
-      borderRadius: t.radius.md,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    saveBtn: {
-      flex: 1,
-      height: 48,
-      borderRadius: t.radius.md,
-      backgroundColor: t.colors.accent,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    saveBtnText: { ...t.type.bodyStrong, color: t.colors.onAccent },
-
-    confirmMsg: { ...t.type.body, color: t.colors.textSub, marginBottom: t.spacing.xl },
-    sheetBtnRow: { flexDirection: 'row', gap: t.spacing.md, marginTop: t.spacing.xs },
-    sheetBtnCancel: {
-      flex: 1,
-      paddingVertical: 14,
-      borderRadius: t.radius.md,
-      backgroundColor: t.colors.surfaceAlt,
-      alignItems: 'center',
-    },
-    sheetBtnCancelText: { ...t.type.bodyStrong, color: t.colors.text },
-    sheetBtnDelete: {
-      flex: 1,
-      paddingVertical: 14,
-      borderRadius: t.radius.md,
-      backgroundColor: t.colors.danger,
-      alignItems: 'center',
-    },
-    sheetBtnDeleteText: { ...t.type.bodyStrong, color: t.colors.onDanger },
-
-    reserveAddRow: { flexDirection: 'row', alignItems: 'center', marginBottom: t.spacing.md },
-    addReserveBtn: {
-      width: 44,
-      height: 44,
-      borderRadius: t.radius.md,
-      backgroundColor: t.colors.accent,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    reserveItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: t.spacing.md,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
-    },
-    reserveItemTitle: { ...t.type.bodyStrong, color: t.colors.text },
-    reserveItemNotes: { ...t.type.caption, color: t.colors.textMuted, marginTop: 1 },
-    emptyBox: { alignItems: 'center', paddingVertical: t.spacing.xxl },
-    emptyText: { ...t.type.body, color: t.colors.textMuted },
-
-    pickItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: t.spacing.md,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
-    },
-
-    fab: {
-      position: 'absolute',
-      right: t.spacing.lg,
-      width: 56,
-      height: 56,
-      borderRadius: t.radius.pill,
-      backgroundColor: t.colors.accent,
-      alignItems: 'center',
-      justifyContent: 'center',
-      ...t.elevation.e2,
-    },
-
-    gridHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: t.spacing.xs,
-      marginBottom: 2,
-    },
-    gridHeaderCell: { flex: 1, alignItems: 'center', gap: 2 },
-    gridHeaderText: { ...t.type.caption, color: t.colors.textMuted },
-    gridRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: 5,
-      paddingHorizontal: t.spacing.xs,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
-    },
-    gridDayLabel: { ...t.type.caption, width: 70, color: t.colors.text },
-    gridCell: {
-      flex: 1,
-      height: 34,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: t.radius.sm,
-      marginHorizontal: 3,
-      backgroundColor: t.colors.surfaceAlt,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-    },
-    gridCellActive: {
-      backgroundColor: t.colors.accentSurface,
-      borderColor: t.colors.accent,
-    },
-    gridCellDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: t.colors.borderStrong },
-    multiSelCountRow: { alignItems: 'center', marginTop: t.spacing.sm },
-    multiSelCount: { ...t.type.caption, color: t.colors.textMuted },
-
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, marginTop: t.spacing.xs },
-    reservePickBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: t.spacing.xs,
-      paddingHorizontal: t.spacing.md,
-      paddingVertical: t.spacing.md,
-      borderRadius: t.radius.md,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.colors.warningSurface,
-    },
-    reservePickBtnText: { ...t.type.caption, color: t.colors.warning },
-
-    headerDateBtn: { flexDirection: 'row', alignItems: 'center' },
-
-    calMonthRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: t.spacing.lg,
-      paddingHorizontal: t.spacing.xs,
-    },
-    calMonthTitle: { ...t.type.heading, flex: 1, textAlign: 'center' },
-    calWeekRow: { flexDirection: 'row', marginBottom: t.spacing.xs },
-    calWeekLabel: {
-      ...t.type.caption,
-      flex: 1,
-      textAlign: 'center',
-      paddingVertical: t.spacing.xs,
-    },
-    calRow: { flexDirection: 'row', borderRadius: t.radius.sm, marginVertical: 1 },
-    calRowSelected: { backgroundColor: t.colors.accentSurface },
-    calCell: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: t.spacing.xs },
-    calDayInner: {
-      width: 32,
-      height: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: t.radius.pill,
-    },
-    calDayTodayBg: { backgroundColor: t.colors.accent },
-    calDayText: { ...t.type.body },
-    calDayTodayText: { color: t.colors.onAccent },
-    calTodayBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: t.spacing.lg,
-      paddingVertical: t.spacing.md,
-      borderRadius: t.radius.md,
-      borderWidth: 1,
-      borderColor: t.colors.accentBorder,
-      backgroundColor: t.colors.accentSurface,
-    },
-    calTodayBtnText: { ...t.type.label, color: t.colors.accent },
-  });
+const createStyles = (t: Theme) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: t.colors.bg },
+  weekBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 },
+  weekTitle: { flex: 1, minHeight: 48, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  weekText: { color: t.colors.text, fontSize: 16, fontWeight: '600', flexShrink: 1 },
+  tools: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+  agenda: { paddingHorizontal: 16, paddingBottom: 100 },
+  day: { backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.tabBorder, borderRadius: 16, paddingHorizontal: 14, paddingTop: 14, marginBottom: 12 },
+  today: { borderColor: t.colors.accentBorder },
+  dayHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, paddingBottom: 10 },
+  dayName: { color: t.colors.text, fontSize: 17, fontWeight: '600' },
+  dayDate: { color: t.colors.textMuted, fontSize: 12 },
+  meal: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderTopWidth: 1, borderColor: t.colors.tabBorder },
+  mealTitle: { color: t.colors.text, fontSize: 16, lineHeight: 23, fontWeight: '500' },
+  caption: { color: t.colors.textMuted, fontSize: 12, marginTop: 3 },
+  notes: { color: t.colors.textSub, fontSize: 13, lineHeight: 19, marginTop: 6 },
+  addDay: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, borderTopWidth: 1, borderColor: t.colors.tabBorder },
+  addLabel: { color: t.colors.accent, fontSize: 14, fontWeight: '500', flexShrink: 1 },
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 10 },
+  label: { color: t.colors.textSub, fontSize: 14, fontWeight: '600', marginTop: 10 },
+  hint: { color: t.colors.textSub, fontSize: 14, lineHeight: 21, marginVertical: 12 },
+  error: { color: t.colors.danger, fontSize: 14, lineHeight: 21, marginVertical: 12 },
+  multiDay: { paddingVertical: 4, borderBottomWidth: 1, borderColor: t.colors.tabBorder },
+  reserveRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  calendarRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  calendarWeekday: { textAlign: 'center', paddingVertical: 8, color: t.colors.textMuted, fontSize: 12 },
+  calendarCell: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 24 },
+  selectedDate: { backgroundColor: t.colors.accent },
+});

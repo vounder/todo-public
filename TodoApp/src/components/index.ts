@@ -1,4 +1,7 @@
 export { Text } from './Text';
+export { Notice } from './Notice';
+export { SyncNotice } from './SyncNotice';
+export { useSnackbar } from './Snackbar';
 export { Sheet, SheetActions } from './Sheet';
 export type { SheetProps } from './Sheet';
 export { Popover } from './Popover';

@@ -57,6 +57,9 @@ export function Button({
       ]}
       onPress={onPress}
       disabled={inactive}
+      accessibilityRole="button"
+      accessibilityLabel={children}
+      accessibilityState={{ disabled: inactive, busy: loading }}
       activeOpacity={0.8}
     >
       {loading ? (
@@ -75,6 +78,7 @@ export function Button({
 const createStyles = (t: Theme) =>
   StyleSheet.create({
     base: {
+      minHeight: 48,
       paddingVertical: 14,
       paddingHorizontal: t.spacing.lg,
       borderRadius: t.radius.md,
@@ -82,9 +86,9 @@ const createStyles = (t: Theme) =>
       justifyContent: 'center',
     },
     sm: { paddingVertical: 9, paddingHorizontal: t.spacing.md, borderRadius: t.radius.sm },
-    content: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
-    label: { ...t.type.bodyStrong },
-    labelSm: { ...t.type.label },
+    content: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: t.spacing.sm, flexShrink: 1 },
+    label: { ...t.type.bodyStrong, flexShrink: 1, textAlign: 'center' },
+    labelSm: { ...t.type.label, flexShrink: 1, textAlign: 'center' },
     primary: { backgroundColor: t.colors.accent },
     secondary: { backgroundColor: t.colors.surfaceAlt },
     danger: { backgroundColor: t.colors.danger },

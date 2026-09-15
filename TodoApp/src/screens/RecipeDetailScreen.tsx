@@ -1,593 +1,178 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View, FlatList, TouchableOpacity, StyleSheet,
-  Alert, KeyboardAvoidingView, ScrollView,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { View, FlatList, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Recipe, Ingredient, Tag, HealthLevel, ShoppingListDef } from '../types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Recipe, Ingredient, Tag } from '../types';
 import { ApiService } from '../services/ApiService';
-import { migrateMappings, mergeMappings } from '../services/ingredientTags';
 import { Theme, useTheme, useThemedStyles } from '../theme/ThemeContext';
-import {
-  RECIPE_ICONS,
-  HEALTH_CONFIG,
-  ALL_HEALTH_LEVELS,
-  getRecipeIcon,
-  healthColor,
-} from '../theme/recipeIcons';
-import {
-  Text,
-  ScreenHeader,
-  Card,
-  Fab,
-  Sheet,
-  SheetActions,
-  Button,
-  Input,
-  Chip,
-  Checkbox,
-  ConfirmSheet,
-} from '../components';
+import { RECIPE_ICONS, HEALTH_CONFIG, ALL_HEALTH_LEVELS, getRecipeIcon, healthColor } from '../theme/recipeIcons';
+import { Text, ScreenHeader, Sheet, SheetActions, Button, Input, Chip, IconButton, ListRow, EmptyState, SyncNotice, useSnackbar } from '../components';
+import { ShoppingTransferSheet } from '../components/ShoppingTransferSheet';
 
 export default function RecipeDetailScreen({ route, navigation }: any) {
-  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [recipe, setRecipe] = useState<Recipe>(route.params.recipe);
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [ingredientName, setIngredientName] = useState('');
-  const [ingredientAmount, setIngredientAmount] = useState('');
-  const [ingredientUnit, setIngredientUnit] = useState('');
-  const [isShoppingModalVisible, setIsShoppingModalVisible] = useState(false);
-  const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
+  const current = useRef(recipe);
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
   const [tags, setTags] = useState<Tag[]>([]);
-  const [selectedIngredientTags, setSelectedIngredientTags] = useState<string[]>([]);
-  const [isIngredientTagModalVisible, setIsIngredientTagModalVisible] = useState(false);
-  const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null);
-  const [isHealthModalVisible, setIsHealthModalVisible] = useState(false);
-  const [isIconModalVisible, setIsIconModalVisible] = useState(false);
-  const [shoppingLists, setShoppingLists] = useState<ShoppingListDef[]>([]);
-  const [selectedShoppingListId, setSelectedShoppingListId] = useState<string>('');
-  const [deleteIngredientId, setDeleteIngredientId] = useState<string | null>(null);
-
+  const [panel, setPanel] = useState<'ingredient' | 'options' | 'name' | 'health' | 'icon' | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+  const [unit, setUnit] = useState('');
+  const [chosenTags, setChosenTags] = useState<string[]>([]);
+  const [transfer, setTransfer] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const snackbar = useSnackbar(88);
+  const transferRecipes = useMemo(() => [recipe], [recipe]);
+  const apply = (next: Recipe) => { current.current = next; setRecipe(next); };
   useEffect(() => {
-    loadTags();
-    loadMappingsFromServer();
-    loadShoppingLists();
-  }, [recipe.name]);
-
-  const loadTags = async () => {
+    void AsyncStorage.getItem('@tags').then(raw => setTags(raw ? JSON.parse(raw) : [])).catch(() => {});
+    const subscriptions = [
+      ApiService.subscribe('recipes', (recipes: Recipe[]) => { const next = recipes.find(value => value.id === current.current.id); if (next) apply(next); }),
+      ApiService.subscribe('tags', setTags),
+    ];
+    return () => subscriptions.forEach(fn => fn());
+  }, []);
+  function save(next: Recipe) {
+    const updated = { ...next, updatedAt: Date.now() };
+    apply(updated);
+    const write = writes.current.catch(() => {}).then(async () => {
+      const raw = await AsyncStorage.getItem('@recipes');
+      const recipes: Recipe[] = raw ? JSON.parse(raw) : [];
+      if (!recipes.some(value => value.id === updated.id)) throw new Error('Gericht existiert nicht mehr.');
+      const result = recipes.map(value => value.id === updated.id ? updated : value);
+      await AsyncStorage.setItem('@recipes', JSON.stringify(result));
+      await ApiService.syncRecipesToServer(result);
+    });
+    writes.current = write;
+    return write;
+  }
+  function openIngredient(ingredient?: Ingredient) {
+    setEditing(ingredient?.id || null); setName(ingredient?.name || ''); setAmount(ingredient?.amount || '');
+    setUnit(ingredient?.unit || ''); setChosenTags(ingredient?.tags || []); setError(''); setPanel('ingredient');
+  }
+  async function saveForm() {
+    if (!name.trim() || saving) return;
+    setSaving(true);
     try {
-      const data = await AsyncStorage.getItem('@tags');
-      if (data) setTags(JSON.parse(data));
-    } catch (e) {}
-  };
-
-  const loadShoppingLists = async () => {
-    try {
-      const raw = await AsyncStorage.getItem('@shopping_lists');
-      const lists: ShoppingListDef[] = raw ? JSON.parse(raw) : [];
-      if (lists.length > 0) {
-        setShoppingLists(lists);
-        const lastId = await AsyncStorage.getItem('@last_shopping_list_id');
-        const valid = lastId && lists.some(l => l.id === lastId);
-        setSelectedShoppingListId(valid ? lastId! : lists[0].id);
+      if (panel === 'name') await save({ ...current.current, name: name.trim() });
+      else {
+        const ingredient: Ingredient = { id: editing || Date.now() + '-' + Math.random().toString(36).slice(2), name: name.trim(), amount: amount.trim(), unit: unit.trim(), tags: chosenTags };
+        await save({ ...current.current, ingredients: editing ? current.current.ingredients.map(value => value.id === editing ? ingredient : value) : [...current.current.ingredients, ingredient] });
       }
-    } catch (e) {}
-  };
-
-  /**
-   * Lief vorher alle 5 Sekunden und hat den lokalen Speicher jedes Mal
-   * bedingungslos mit dem Serverstand ueberschrieben. Eine Zuordnung, die
-   * die Einkaufsliste gerade gelernt hatte, deren Sync aber noch nicht durch
-   * war, wurde dadurch geloescht -- solange irgendwo ein Rezept offen war.
-   *
-   * Jetzt einmalig beim Oeffnen und zusammenfuehrend statt ersetzend.
-   */
-  const loadMappingsFromServer = async () => {
+      setPanel(null);
+    } catch { setError('Speichern fehlgeschlagen. Deine Eingabe bleibt erhalten.'); }
+    finally { setSaving(false); }
+  }
+  async function removeIngredient(id: string) {
+    const index = current.current.ingredients.findIndex(value => value.id === id);
+    const ingredient = current.current.ingredients[index];
+    if (!ingredient) return;
     try {
-      const serverRaw = await ApiService.fetchMappingsFromServer();
-      if (!serverRaw) return;
-      const localRaw = await AsyncStorage.getItem('@ingredient_tag_mappings');
-      const merged = mergeMappings(
-        migrateMappings(localRaw ? JSON.parse(localRaw) : []),
-        migrateMappings(serverRaw),
-      );
-      await AsyncStorage.setItem('@ingredient_tag_mappings', JSON.stringify(merged));
-    } catch (e) {}
-  };
-
-  const saveRecipe = async (updatedRecipe: Recipe) => {
-    try {
-      const withTimestamp = { ...updatedRecipe, updatedAt: Date.now() };
-      const data = await AsyncStorage.getItem('@recipes');
-      const recipes: Recipe[] = data ? JSON.parse(data) : [];
-      const index = recipes.findIndex(r => r.id === withTimestamp.id);
-      if (index !== -1) {
-        recipes[index] = withTimestamp;
-        await AsyncStorage.setItem('@recipes', JSON.stringify(recipes));
-        setRecipe(withTimestamp);
-        ApiService.syncRecipesToServer(recipes).catch(() => {});
-      }
-    } catch (e) {}
-  };
-
-  const handleAddIngredient = async () => {
-    if (ingredientName.trim()) {
-      const newIngredient: Ingredient = {
-        id: Date.now().toString(), name: ingredientName.trim(),
-        amount: ingredientAmount.trim(), unit: ingredientUnit.trim(), tags: selectedIngredientTags,
-      };
-      await saveRecipe({ ...recipe, ingredients: [...recipe.ingredients, newIngredient] });
-      setIngredientName(''); setIngredientAmount(''); setIngredientUnit('');
-      setSelectedIngredientTags([]); setIsModalVisible(false);
-    }
-  };
-
-  const handleOpenIngredientTagModal = (ingredient: Ingredient) => {
-    setEditingIngredient(ingredient);
-    setSelectedIngredientTags(ingredient.tags || []);
-    setIsIngredientTagModalVisible(true);
-  };
-
-  const handleSaveIngredientTags = async () => {
-    if (editingIngredient) {
-      await saveRecipe({ ...recipe, ingredients: recipe.ingredients.map(i => i.id === editingIngredient.id ? { ...i, tags: selectedIngredientTags } : i) });
-      setIsIngredientTagModalVisible(false); setEditingIngredient(null); setSelectedIngredientTags([]);
-    }
-  };
-
-  const toggleIngredientTag = (tagId: string) => {
-    setSelectedIngredientTags(prev => prev.includes(tagId) ? prev.filter(t => t !== tagId) : [...prev, tagId]);
-  };
-
-  const handleDeleteIngredient = (ingredientId: string) => {
-    saveRecipe({ ...recipe, ingredients: recipe.ingredients.filter(i => i.id !== ingredientId) });
-  };
-
-  const handleSetHealthLevel = async (level: HealthLevel | null) => {
-    await saveRecipe({ ...recipe, healthLevel: level ?? undefined });
-    setIsHealthModalVisible(false);
-  };
-
-  const handleSetIcon = async (iconKey: string) => {
-    await saveRecipe({ ...recipe, icon: iconKey });
-    setIsIconModalVisible(false);
-  };
-
-  const handleOpenShoppingModal = () => {
-    setSelectedIngredients(recipe.ingredients.map(i => i.id));
-    setIsShoppingModalVisible(true);
-  };
-
-  const toggleIngredientSelection = (ingredientId: string) => {
-    setSelectedIngredients(prev => prev.includes(ingredientId) ? prev.filter(id => id !== ingredientId) : [...prev, ingredientId]);
-  };
-
-  const handleAddSelectedToShoppingList = async () => {
-    try {
-      const raw = await AsyncStorage.getItem('@shopping_lists');
-      const lists: ShoppingListDef[] = raw ? JSON.parse(raw) : [];
-      const targetIdx = lists.findIndex(l => l.id === selectedShoppingListId);
-      if (targetIdx === -1) { Alert.alert('Fehler', 'Liste nicht gefunden.'); return; }
-      const ingredientsToAdd = recipe.ingredients.filter(i => selectedIngredients.includes(i.id));
-      let addedCount = 0;
-      for (const ingredient of ingredientsToAdd) {
-        const exists = lists[targetIdx].items.find(item => item.name.toLowerCase().includes(ingredient.name.toLowerCase()));
-        if (!exists) {
-          lists[targetIdx].items.push({ id: `${Date.now()}-${Math.random()}`, name: `${ingredient.amount} ${ingredient.unit} ${ingredient.name}`.trim(), checked: false, createdAt: Date.now(), checkedAt: null, tags: ingredient.tags || [] });
-          addedCount++;
-        }
-      }
-      await AsyncStorage.setItem('@shopping_lists', JSON.stringify(lists));
-      await AsyncStorage.setItem('@last_shopping_list_id', selectedShoppingListId);
-      ApiService.syncShoppingListsToServer(lists).catch(() => {});
-      // Rezept in Reserve des Planers eintragen (falls noch nicht vorhanden)
-      const reserveRaw = await AsyncStorage.getItem('@meal_reserve');
-      const reserveList: { id: string; title: string; notes?: string }[] = reserveRaw ? JSON.parse(reserveRaw) : [];
-      const alreadyInReserve = reserveList.some(r => r.title.toLowerCase() === recipe.name.toLowerCase());
-      if (!alreadyInReserve) {
-        reserveList.push({ id: `${Date.now()}`, title: recipe.name });
-        await AsyncStorage.setItem('@meal_reserve', JSON.stringify(reserveList));
-      }
-      setIsShoppingModalVisible(false);
-      const listName = lists[targetIdx].name;
-      Alert.alert('Erfolg', `${addedCount} Zutat${addedCount !== 1 ? 'en' : ''} zu „${listName}" hinzugefügt${alreadyInReserve ? '' : '\nRezept zur Planer-Reserve hinzugefügt'}`);
-    } catch (e) {}
-  };
-
-  const renderIngredient = ({ item }: { item: Ingredient }) => {
-    const ingredientTags = (item.tags || []).map(tagId => tags.find(t => t.id === tagId)).filter(Boolean) as Tag[];
-    return (
-      <Card
-        row
-        style={styles.card}
-        onPress={() => handleOpenIngredientTagModal(item)}
-        onLongPress={() => setDeleteIngredientId(item.id)}
-      >
-        <View style={styles.cardBody}>
-          {(item.amount || item.unit) ? (
-            <Text style={styles.cardAmount}>{item.amount} {item.unit}</Text>
-          ) : null}
-          <Text style={styles.cardName}>{item.name}</Text>
-          {ingredientTags.length > 0 && (
-            <View style={styles.tagsRow}>
-              {ingredientTags.map(tag => (
-                <Chip key={tag.id} label={tag.name} color={tag.color} selected size="sm" />
-              ))}
-            </View>
-          )}
-        </View>
-        <Ionicons name="pencil-outline" size={16} color={colors.textMuted} />
-      </Card>
-    );
-  };
-
+      await save({ ...current.current, ingredients: current.current.ingredients.filter(value => value.id !== id) });
+      setPanel(null);
+      snackbar.show({ text: 'Zutat entfernt', action: 'Rückgängig', onAction: async () => {
+        if (current.current.ingredients.some(value => value.id === id)) return;
+        const ingredients = [...current.current.ingredients];
+        ingredients.splice(Math.min(index, ingredients.length), 0, ingredient);
+        await save({ ...current.current, ingredients });
+      } });
+    } catch { setError('Zutat konnte nicht entfernt werden.'); }
+  }
+  async function changeProperty(update: Partial<Recipe>) {
+    try { await save({ ...current.current, ...update }); setPanel(null); }
+    catch { snackbar.show({ text: 'Änderung konnte nicht gespeichert werden.' }); }
+  }
   const health = recipe.healthLevel ? HEALTH_CONFIG[recipe.healthLevel] : null;
-
-  return (
-    <KeyboardAvoidingView style={styles.container} behavior="padding">
-      <ScreenHeader
-        title={recipe.name}
-        subtitle={recipe.ingredients.length === 0 ? 'Keine Zutaten' : `${recipe.ingredients.length} Zutat${recipe.ingredients.length !== 1 ? 'en' : ''}`}
-        variant="compact"
-        onBack={() => navigation.goBack()}
-        actions={[
-          { icon: 'apps-outline', onPress: () => setIsIconModalVisible(true), accessibilityLabel: 'Icon wählen' },
-          { icon: 'cart-outline', onPress: handleOpenShoppingModal, accessibilityLabel: 'Zur Einkaufsliste' },
-        ]}
-      />
-
-      <TouchableOpacity
-        style={styles.healthBand}
-        onPress={() => setIsHealthModalVisible(true)}
-        activeOpacity={0.8}
-      >
-        {health && recipe.healthLevel ? (
-          <>
-            <Ionicons name={health.icon} size={16} color={healthColor(recipe.healthLevel, colors)} />
-            <Text style={[styles.healthBandText, { color: healthColor(recipe.healthLevel, colors) }]}>
-              {health.label}
-            </Text>
-          </>
-        ) : (
-          <>
-            <Ionicons name="fitness-outline" size={16} color={colors.textMuted} />
-            <Text style={styles.healthBandPlaceholder}>Gesundheit einstellen</Text>
-          </>
-        )}
-        <Ionicons name="chevron-forward" size={14} color={colors.textMuted} style={{ marginLeft: 'auto' }} />
-      </TouchableOpacity>
-
-      {recipe.ingredients.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons name="nutrition-outline" size={56} color={colors.textMuted} style={styles.emptyIcon} />
-          <Text style={styles.emptyTitle}>Noch keine Zutaten</Text>
-          <Text style={styles.emptySub}>Füge die ersten Zutaten hinzu.</Text>
+  return <View style={styles.container}>
+    <ScreenHeader title="Gericht" variant="compact" onBack={() => navigation.goBack()} actions={[
+      { icon: 'ellipsis-horizontal', accessibilityLabel: 'Gerichtsoptionen', onPress: () => setPanel('options') },
+    ]} />
+    <SyncNotice />
+    <FlatList data={recipe.ingredients} keyExtractor={item => item.id} contentContainerStyle={styles.list}
+      ListHeaderComponent={<View>
+        <View style={styles.hero}>
+          <View style={styles.recipeIcon}><Ionicons name={getRecipeIcon(recipe.icon).icon} size={26} color={colors.accent} /></View>
+          <View style={{ flex: 1 }}><Text style={styles.title} accessibilityRole="header">{recipe.name}</Text><Text style={styles.subtitle}>{recipe.ingredients.length + ' Zutaten'}</Text></View>
         </View>
-      ) : (
-        <FlatList
-          data={recipe.ingredients}
-          renderItem={renderIngredient}
-          keyExtractor={item => item.id}
-          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+        <Pressable style={styles.healthRow} onPress={() => setPanel('health')} accessibilityRole="button" accessibilityLabel="Eigene Einschätzung ändern">
+          <Ionicons name={health?.icon || 'heart-outline'} size={18} color={recipe.healthLevel ? healthColor(recipe.healthLevel, colors) : colors.textMuted} />
+          <Text style={styles.healthText}>{health ? health.label : 'Eigene Einschätzung hinzufügen'}</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+        </Pressable>
+        <View style={styles.section}><Text style={styles.sectionTitle}>Zutaten</Text><Button standalone variant="ghost" icon="add" onPress={() => openIngredient()}>Hinzufügen</Button></View>
+      </View>}
+      ListEmptyComponent={<View style={{ paddingVertical: 40 }}><EmptyState icon="nutrition-outline" title="Was kommt hinein?" subtitle="Ergänze die erste Zutat mit Menge und Einheit." /></View>}
+      renderItem={({ item }) => <View style={styles.ingredient}>
+        <Pressable style={styles.ingredientMain} onPress={() => openIngredient(item)} accessibilityRole="button" accessibilityLabel={item.name + ' bearbeiten'}>
+          <Text style={styles.amount}>{[item.amount, item.unit].filter(Boolean).join(' ') || '–'}</Text>
+          <View style={{ flex: 1 }}><Text style={styles.ingredientName}>{item.name}</Text>
+            {!!item.tags?.length && <Text style={styles.caption}>{item.tags.map(id => tags.find(tag => tag.id === id)?.name).filter(Boolean).join(' · ')}</Text>}</View>
+        </Pressable>
+        <IconButton icon="pencil-outline" accessibilityLabel={'Zutat ' + item.name + ' bearbeiten'} onPress={() => openIngredient(item)} />
+      </View>} />
+    <View style={styles.footer}><Button standalone icon="cart-outline" disabled={!recipe.ingredients.length} onPress={() => setTransfer(true)}>Zutaten einkaufen</Button></View>
 
-      <Fab icon="add" onPress={() => setIsModalVisible(true)} accessibilityLabel="Neue Zutat" />
-
-      <Sheet
-        visible={isModalVisible}
-        onClose={() => setIsModalVisible(false)}
-        title="Neue Zutat"
-        keyboardAware
-      >
-        <Input
-          placeholder="Name (z.B. Mehl)"
-          value={ingredientName}
-          onChangeText={setIngredientName}
-          autoFocus
-        />
-        <View style={styles.amountRow}>
-          <Input
-            containerStyle={{ flex: 1 }}
-            placeholder="Menge"
-            value={ingredientAmount}
-            onChangeText={setIngredientAmount}
-            keyboardType="numeric"
-          />
-          <Input
-            containerStyle={{ flex: 1 }}
-            placeholder="Einheit"
-            value={ingredientUnit}
-            onChangeText={setIngredientUnit}
-          />
-        </View>
-        {tags.length > 0 && (
-          <View style={styles.tagPicker}>
-            <Text style={styles.pickerLabel}>Tags</Text>
-            <View style={styles.tagPickerRow}>
-              {tags.map(tag => (
-                <Chip
-                  key={tag.id}
-                  label={tag.name}
-                  color={tag.color}
-                  selected={selectedIngredientTags.includes(tag.id)}
-                  onPress={() => toggleIngredientTag(tag.id)}
-                  size="sm"
-                />
-              ))}
-            </View>
-          </View>
-        )}
-        <SheetActions>
-          <Button
-            variant="secondary"
-            onPress={() => {
-              setIsModalVisible(false);
-              setIngredientName(''); setIngredientAmount(''); setIngredientUnit('');
-            }}
-          >
-            Abbrechen
-          </Button>
-          <Button onPress={handleAddIngredient} disabled={!ingredientName.trim()}>Hinzufügen</Button>
-        </SheetActions>
-      </Sheet>
-
-      <Sheet
-        visible={isShoppingModalVisible}
-        onClose={() => setIsShoppingModalVisible(false)}
-        title="Zur Einkaufsliste"
-      >
-        {shoppingLists.length > 1 && (
-          <View style={styles.tagPicker}>
-            <Text style={styles.pickerLabel}>Liste</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagPickerRow}>
-              {shoppingLists.map(list => (
-                <Chip
-                  key={list.id}
-                  label={list.name}
-                  selected={list.id === selectedShoppingListId}
-                  onPress={async () => {
-                    setSelectedShoppingListId(list.id);
-                    await AsyncStorage.setItem('@last_shopping_list_id', list.id);
-                  }}
-                />
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        <Text style={styles.pickerLabel}>Zutaten auswählen</Text>
-        <ScrollView style={styles.checkList} showsVerticalScrollIndicator={false}>
-          {recipe.ingredients.map(item => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.checkItem}
-              onPress={() => toggleIngredientSelection(item.id)}
-              activeOpacity={0.7}
-            >
-              <Checkbox checked={selectedIngredients.includes(item.id)} shape="square" size={20} />
-              <Text style={styles.checkLabel}>{item.amount} {item.unit} {item.name}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        <SheetActions>
-          <Button variant="secondary" onPress={() => setIsShoppingModalVisible(false)}>Abbrechen</Button>
-          <Button onPress={handleAddSelectedToShoppingList} disabled={selectedIngredients.length === 0}>
-            {`Hinzufügen (${selectedIngredients.length})`}
-          </Button>
-        </SheetActions>
-      </Sheet>
-
-      <Sheet
-        visible={isIngredientTagModalVisible}
-        onClose={() => setIsIngredientTagModalVisible(false)}
-        title="Tags zuweisen"
-        subtitle={editingIngredient?.name}
-      >
-        {tags.length === 0 ? (
-          <Text style={styles.noTags}>Noch keine Tags vorhanden</Text>
-        ) : (
-          <ScrollView style={styles.checkList} showsVerticalScrollIndicator={false}>
-            {tags.map(tag => (
-              <TouchableOpacity
-                key={tag.id}
-                style={styles.checkItem}
-                onPress={() => toggleIngredientTag(tag.id)}
-                activeOpacity={0.7}
-              >
-                <Checkbox
-                  checked={selectedIngredientTags.includes(tag.id)}
-                  shape="square"
-                  size={20}
-                />
-                <Chip label={tag.name} color={tag.color} selected size="sm" />
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
-        <SheetActions>
-          <Button
-            variant="secondary"
-            onPress={() => {
-              setIsIngredientTagModalVisible(false);
-              setEditingIngredient(null);
-              setSelectedIngredientTags([]);
-            }}
-          >
-            Abbrechen
-          </Button>
-          <Button onPress={handleSaveIngredientTags}>Speichern</Button>
-        </SheetActions>
-      </Sheet>
-
-      <Sheet
-        visible={isHealthModalVisible}
-        onClose={() => setIsHealthModalVisible(false)}
-        title="Wie gesund ist das Gericht?"
-        bottomInset={24}
-      >
-        {ALL_HEALTH_LEVELS.map(level => {
-          const cfg = HEALTH_CONFIG[level];
-          const tone = healthColor(level, colors);
-          const isActive = recipe.healthLevel === level;
-          return (
-            <TouchableOpacity
-              key={level}
-              style={[styles.healthOption, isActive && { backgroundColor: `${tone}1F`, borderColor: tone }]}
-              onPress={() => handleSetHealthLevel(level)}
-              activeOpacity={0.75}
-            >
-              <View style={[styles.healthOptionIcon, { backgroundColor: `${tone}22` }]}>
-                <Ionicons name={cfg.icon} size={20} color={tone} />
-              </View>
-              <Text style={[styles.healthOptionLabel, isActive && { color: tone }]}>{cfg.label}</Text>
-              {isActive && (
-                <Ionicons name="checkmark-circle" size={20} color={tone} style={{ marginLeft: 'auto' }} />
-              )}
-            </TouchableOpacity>
-          );
-        })}
-        {recipe.healthLevel && (
-          <SheetActions>
-            <Button variant="secondary" icon="close-outline" onPress={() => handleSetHealthLevel(null)}>
-              Zurücksetzen
-            </Button>
-          </SheetActions>
-        )}
-      </Sheet>
-
-      <Sheet
-        visible={isIconModalVisible}
-        onClose={() => setIsIconModalVisible(false)}
-        title="Icon wählen"
-        bottomInset={24}
-      >
-        <ScrollView contentContainerStyle={styles.iconGrid} showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
-          {RECIPE_ICONS.map(iconDef => {
-            const isActive = getRecipeIcon(recipe.icon).key === iconDef.key;
-            return (
-              <TouchableOpacity
-                key={iconDef.key}
-                style={[styles.iconGridItem, isActive && styles.iconGridItemActive]}
-                onPress={() => handleSetIcon(iconDef.key)}
-                activeOpacity={0.75}
-              >
-                <View style={styles.iconGridCircle}>
-                  <Ionicons
-                    name={iconDef.icon}
-                    size={24}
-                    color={isActive ? colors.accent : colors.textSub}
-                  />
-                </View>
-                <Text
-                  style={[styles.iconGridLabel, isActive && { color: colors.accent }]}
-                  numberOfLines={1}
-                >
-                  {iconDef.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </Sheet>
-
-      <ConfirmSheet
-        visible={deleteIngredientId !== null}
-        title="Zutat löschen"
-        message="Zutat wirklich aus dem Rezept entfernen?"
-        onConfirm={() => {
-          const id = deleteIngredientId;
-          setDeleteIngredientId(null);
-          if (id) handleDeleteIngredient(id);
-        }}
-        onCancel={() => setDeleteIngredientId(null)}
-      />
-    </KeyboardAvoidingView>
-  );
+    <Sheet visible={panel === 'ingredient' || panel === 'name'} onClose={() => { if (!saving) setPanel(null); }} title={panel === 'name' ? 'Gericht umbenennen' : editing ? 'Zutat bearbeiten' : 'Zutat hinzufügen'}>
+      <Input label={panel === 'name' ? 'Name des Gerichts' : 'Zutat'} value={name} onChangeText={setName} autoFocus placeholder={panel === 'ingredient' ? 'Zum Beispiel: Tomaten' : undefined} />
+      {panel === 'ingredient' && <>
+        <View style={styles.fields}><Input label="Menge" value={amount} onChangeText={setAmount} placeholder="250" containerStyle={{ flex: 1 }} />
+          <Input label="Einheit" value={unit} onChangeText={setUnit} placeholder="g" containerStyle={{ flex: 1 }} /></View>
+        <Text style={styles.hint}>Menge und Einheit sind optional.</Text>
+        {!!tags.length && <><Text style={styles.label}>Kategorien</Text><View style={styles.wrap}>{tags.map(tag => <Chip key={tag.id} label={tag.name} color={tag.color} selected={chosenTags.includes(tag.id)}
+          onPress={() => setChosenTags(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])} />)}</View></>}
+      </>}
+      {!!error && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
+      <SheetActions><Button variant="secondary" disabled={saving} onPress={() => setPanel(null)}>Abbrechen</Button><Button disabled={!name.trim()} loading={saving} onPress={saveForm}>Speichern</Button></SheetActions>
+      {panel === 'ingredient' && editing && <Button standalone variant="ghost" icon="trash-outline" disabled={saving} style={{ marginTop: 12 }} onPress={() => { void removeIngredient(editing); }}>Zutat entfernen</Button>}
+    </Sheet>
+    <Sheet visible={panel === 'options'} onClose={() => setPanel(null)} title="Gerichtsoptionen">
+      <ListRow title="Umbenennen" icon="pencil-outline" onPress={() => { setName(recipe.name); setError(''); setPanel('name'); }} />
+      <ListRow title="Symbol wählen" icon="shapes-outline" onPress={() => setPanel('icon')} />
+      <ListRow title="Eigene Einschätzung" icon="heart-outline" onPress={() => setPanel('health')} />
+      <ListRow title="App-Einstellungen" icon="settings-outline" onPress={() => { setPanel(null); navigation.navigate('Settings'); }} />
+    </Sheet>
+    <Sheet visible={panel === 'health'} onClose={() => setPanel(null)} title="Eigene Einschätzung" subtitle="Deine persönliche Einordnung für die Gerichtsauswahl.">
+      {ALL_HEALTH_LEVELS.map(level => <ListRow key={level} title={HEALTH_CONFIG[level].label} icon={HEALTH_CONFIG[level].icon} selected={recipe.healthLevel === level} onPress={() => { void changeProperty({ healthLevel: level }); }} />)}
+      <ListRow title="Ohne Einschätzung" selected={!recipe.healthLevel} onPress={() => { void changeProperty({ healthLevel: undefined }); }} />
+    </Sheet>
+    <Sheet visible={panel === 'icon'} onClose={() => setPanel(null)} title="Symbol wählen">
+      <View style={styles.wrap}>{RECIPE_ICONS.map(option => <Pressable key={option.key} style={[styles.iconOption, getRecipeIcon(recipe.icon).key === option.key && { backgroundColor: colors.accentSurface, borderColor: colors.accent }]}
+        accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: getRecipeIcon(recipe.icon).key === option.key }}
+        onPress={() => { void changeProperty({ icon: option.key }); }}>
+        <Ionicons name={option.icon} size={24} color={colors.textSub} /><Text style={styles.caption}>{option.label}</Text>
+      </Pressable>)}</View>
+    </Sheet>
+    <ShoppingTransferSheet visible={transfer} recipes={transferRecipes} onClose={() => setTransfer(false)} onAdded={result => snackbar.show({
+      text: result.added + ' Artikel zu „' + result.listName + '“ hinzugefügt' + (result.skipped ? ' · ' + result.skipped + ' bereits vorhanden' : ''), action: 'Liste öffnen',
+      onAction: async () => { await AsyncStorage.setItem('@active_shopping_list', result.listId); navigation.navigate('ShoppingTab'); },
+    })} />
+    {snackbar.element}
+  </View>;
 }
-
-const createStyles = (t: Theme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.colors.bg },
-    healthBand: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: t.spacing.sm,
-      paddingHorizontal: t.spacing.lg,
-      paddingVertical: t.spacing.md,
-      backgroundColor: t.colors.surface,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
-    },
-    healthBandText: { ...t.type.label },
-    healthBandPlaceholder: { ...t.type.label, color: t.colors.textMuted },
-    list: { padding: t.spacing.lg },
-    card: { marginBottom: t.spacing.sm },
-    cardBody: { flex: 1 },
-    cardAmount: { ...t.type.caption, color: t.colors.textMuted, marginBottom: 2 },
-    cardName: { ...t.type.bodyStrong, color: t.colors.text },
-    tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: t.spacing.xs, marginTop: t.spacing.sm },
-    empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: t.spacing.xl },
-    emptyIcon: { marginBottom: t.spacing.lg, opacity: 0.6 },
-    emptyTitle: { ...t.type.title, color: t.colors.text, marginBottom: t.spacing.sm },
-    emptySub: { ...t.type.body, color: t.colors.textSub, textAlign: 'center' },
-    amountRow: { flexDirection: 'row', gap: t.spacing.md, marginTop: t.spacing.md },
-    tagPicker: { marginTop: t.spacing.md },
-    pickerLabel: { ...t.type.label, color: t.colors.textSub, marginBottom: t.spacing.sm },
-    tagPickerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: t.spacing.sm },
-    checkList: { maxHeight: 320 },
-    checkItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: t.spacing.md,
-      paddingVertical: t.spacing.sm,
-    },
-    checkLabel: { ...t.type.body, color: t.colors.text, flex: 1 },
-    noTags: { ...t.type.body, color: t.colors.textMuted, fontStyle: 'italic' },
-    healthOption: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: t.spacing.md,
-      padding: t.spacing.md,
-      borderRadius: t.radius.md,
-      borderWidth: 1,
-      borderColor: 'transparent',
-      marginBottom: t.spacing.sm,
-    },
-    healthOptionIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: t.radius.sm,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    healthOptionLabel: { ...t.type.bodyStrong, color: t.colors.text },
-    iconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: t.spacing.sm },
-    iconGridItem: {
-      width: '22%',
-      alignItems: 'center',
-      paddingVertical: t.spacing.md,
-      borderRadius: t.radius.md,
-      borderWidth: 1,
-      borderColor: 'transparent',
-    },
-    iconGridItemActive: {
-      backgroundColor: t.colors.accentSurface,
-      borderColor: t.colors.accentBorder,
-    },
-    iconGridCircle: {
-      width: 44,
-      height: 44,
-      borderRadius: t.radius.sm,
-      backgroundColor: t.colors.surfaceAlt,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginBottom: t.spacing.xs,
-    },
-    iconGridLabel: { ...t.type.caption, color: t.colors.textSub, textAlign: 'center' },
-  });
+const createStyles = (t: Theme) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: t.colors.bg },
+  list: { paddingHorizontal: 16, paddingBottom: 24 },
+  hero: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 18 },
+  recipeIcon: { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSurface },
+  title: { color: t.colors.text, fontSize: 25, lineHeight: 32, fontWeight: '700', letterSpacing: -0.5 },
+  subtitle: { color: t.colors.textMuted, fontSize: 13, marginTop: 6 },
+  healthRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, backgroundColor: t.colors.surface, borderRadius: 12 },
+  healthText: { color: t.colors.textSub, fontSize: 14, flex: 1 },
+  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 4 },
+  sectionTitle: { color: t.colors.text, fontSize: 18, fontWeight: '600' },
+  ingredient: { flexDirection: 'row', alignItems: 'center', backgroundColor: t.colors.surface, borderRadius: 12, marginBottom: 6 },
+  ingredientMain: { minHeight: 64, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
+  amount: { color: t.colors.textSub, fontSize: 14, width: 66 },
+  ingredientName: { color: t.colors.text, fontSize: 16, lineHeight: 23 },
+  caption: { color: t.colors.textMuted, fontSize: 12, marginTop: 4 },
+  footer: { padding: 12, backgroundColor: t.colors.surface, borderTopWidth: 1, borderColor: t.colors.tabBorder },
+  fields: { flexDirection: 'row', gap: 12, marginTop: 16 },
+  hint: { fontSize: 13, color: t.colors.textMuted, marginVertical: 12 },
+  label: { fontSize: 14, color: t.colors.textSub, fontWeight: '600', marginTop: 4 },
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 },
+  error: { color: t.colors.danger, fontSize: 14, marginTop: 12 },
+  iconOption: { width: '30%', minHeight: 76, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: t.colors.border, borderRadius: 12, padding: 8 },
+});

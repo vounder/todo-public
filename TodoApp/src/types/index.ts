@@ -88,6 +88,7 @@ export interface ShoppingListDef {
 
 // Globale App-Einstellungen
 export interface AppSettings {
+  autoDeleteCheckedShoppingEnabled?: boolean;
   autoDeleteCheckedShoppingAfterHours?: number;
 }
 

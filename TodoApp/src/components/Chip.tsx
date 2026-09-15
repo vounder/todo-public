@@ -2,7 +2,7 @@ import React from 'react';
 import { View, TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme, useTheme, useThemedStyles } from '../theme/ThemeContext';
-import { tint } from '../theme/tokens';
+import { tint, tagTextColor } from '../theme/tokens';
 import { Text } from './Text';
 
 export interface ChipProps {
@@ -38,11 +38,11 @@ export function Chip({
     styles.base,
     size === 'sm' && styles.sm,
     selected
-      ? { backgroundColor: tint(key), borderColor: key }
+      ? { backgroundColor: color ? tint(key, '20') : colors.accentSurface, borderColor: 'transparent' }
       : { backgroundColor: colors.surfaceAlt, borderColor: colors.border },
     style,
   ];
-  const fg = selected ? key : colors.textSub;
+  const fg = selected ? (color ? tagTextColor(key, colors.isDark) : colors.accent) : colors.textSub;
 
   const content = (
     <>
@@ -55,7 +55,8 @@ export function Chip({
   if (!onPress) return <View style={containerStyle}>{content}</View>;
 
   return (
-    <TouchableOpacity style={containerStyle} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity style={[containerStyle, { minHeight: 48, minWidth: 48, justifyContent: 'center' }]} onPress={onPress} activeOpacity={0.7}
+      accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected }}>
       {content}
     </TouchableOpacity>
   );
@@ -64,6 +65,7 @@ export function Chip({
 const createStyles = (t: Theme) =>
   StyleSheet.create({
     base: {
+      maxWidth: '100%',
       flexDirection: 'row',
       alignItems: 'center',
       gap: t.spacing.xs + 2,
@@ -74,6 +76,6 @@ const createStyles = (t: Theme) =>
     },
     sm: { paddingHorizontal: t.spacing.sm, paddingVertical: 3 },
     dot: { width: 6, height: 6, borderRadius: 3 },
-    label: { ...t.type.label },
-    labelSm: { ...t.type.caption },
+    label: { ...t.type.label, flexShrink: 1 },
+    labelSm: { ...t.type.caption, flexShrink: 1 },
   });

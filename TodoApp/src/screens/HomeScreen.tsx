@@ -1,284 +1,124 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, StyleSheet, FlatList, ListRenderItemInfo } from 'react-native';
+import { View, StyleSheet, FlatList, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StorageService } from '../storage/StorageService';
 import { ApiService } from '../services/ApiService';
 import { TodoList } from '../types';
-import { Theme, useThemedStyles } from '../theme/ThemeContext';
-import { LIST_COLORS, tint } from '../theme/tokens';
-import {
-  Text,
-  ScreenHeader,
-  Card,
-  Fab,
-  Sheet,
-  SheetActions,
-  Button,
-  Input,
-  ListRow,
-  EmptyState,
-} from '../components';
+import { Theme, useTheme, useThemedStyles } from '../theme/ThemeContext';
+import { Text, ScreenHeader, Fab, Sheet, SheetActions, Button, Input, ListRow, EmptyState, IconButton, useConfirm, useSnackbar, SyncNotice } from '../components';
 
 export default function HomeScreen({ navigation }: any) {
-  const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const [todoLists, setTodoLists] = useState<TodoList[]>([]);
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [newListName, setNewListName] = useState('');
-  const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
-  const [renamingList, setRenamingList] = useState<TodoList | null>(null);
-  const [renameText, setRenameText] = useState('');
+  const [lists, setLists] = useState<TodoList[]>([]);
   const [actionList, setActionList] = useState<TodoList | null>(null);
+  const [form, setForm] = useState<{ id?: string } | null>(null);
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const { confirm, element: confirmation } = useConfirm();
+  const snackbar = useSnackbar(88);
 
-  // Daten beim Fokussieren des Screens laden
-  useFocusEffect(
-    useCallback(() => {
-      loadTodoLists();
-    }, [])
-  );
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const local = await StorageService.loadTodoLists();
+        if (active) setLists(local);
+        const remote = await StorageService.refreshTodoLists();
+        if (active) setLists(remote);
+      } catch { /* SyncNotice explains connection failures; keep local content. */ }
+    })();
+    return () => { active = false; };
+  }, []));
+  useEffect(() => ApiService.subscribe('todos', setLists), []);
 
-  // WebSocket für Echtzeit-Updates
-  useEffect(() => {
-    const disconnect = ApiService.connectToServer((updatedLists) => {
-      console.log('📥 Server-Update empfangen');
-      setTodoLists(updatedLists);
-    });
-
-    return () => disconnect();
-  }, []);
-
-  const loadTodoLists = async () => {
-    const lists = await StorageService.loadTodoLists();
-    setTodoLists(lists);
-  };
-
-  const handleCreateList = async () => {
-    if (newListName.trim()) {
-      await StorageService.createTodoList(newListName.trim());
-      setNewListName('');
-      setIsModalVisible(false);
-      loadTodoLists();
-    }
-  };
-
-  const handleLongPressList = (list: TodoList) => {
-    setActionList(list);
-  };
-
-  const handleRenameList = async () => {
-    if (renameText.trim() && renamingList) {
-      const updatedList = { ...renamingList, name: renameText.trim() };
-      await StorageService.updateTodoList(updatedList);
-      setIsRenameModalVisible(false);
-      setRenamingList(null);
-      setRenameText('');
-      loadTodoLists();
-    }
-  };
-
-  const handleDeleteList = async (listId: string) => {
+  function openForm(list?: TodoList) {
+    setName(list?.name || '');
+    setForm(list ? { id: list.id } : {});
     setActionList(null);
-    const updated = await StorageService.deleteTodoList(listId);
-    setTodoLists(updated);
-  };
-
-  const closeCreate = () => {
-    setIsModalVisible(false);
-    setNewListName('');
-  };
-
-  const closeRename = () => {
-    setIsRenameModalVisible(false);
-    setRenamingList(null);
-    setRenameText('');
-  };
-
-  const renderListItem = ({ item, index }: ListRenderItemInfo<TodoList>) => {
-    const completed = item.items.filter(i => i.completed).length;
-    const total = item.items.length;
-    const progress = total > 0 ? completed / total : 0;
-    // Listenfarbe ist Nutzerdatum -- traegt hier nur als Tint, nie als Flaeche.
-    const color = LIST_COLORS[(index ?? 0) % LIST_COLORS.length];
-
-    return (
-      <Card
-        row
-        style={styles.card}
-        onPress={() => navigation.navigate('TodoDetail', { list: item })}
-        onLongPress={() => handleLongPressList(item)}
-      >
-        <View style={[styles.avatar, { backgroundColor: tint(color) }]}>
-          <Text style={[styles.avatarText, { color }]}>{item.name.charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.cardBody}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <View style={styles.progressRow}>
-            <View style={styles.progressTrack}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${Math.round(progress * 100)}%` as any, backgroundColor: color },
-                ]}
-              />
-            </View>
-            <Text style={styles.cardCount}>{total === 0 ? 'Leer' : `${completed}/${total}`}</Text>
-          </View>
-        </View>
-      </Card>
-    );
-  };
-
-  const totalItems = todoLists.reduce((s, l) => s + l.items.length, 0);
-  const totalDone = todoLists.reduce((s, l) => s + l.items.filter(i => i.completed).length, 0);
-
+    setError('');
+  }
+  async function save() {
+    if (!name.trim() || saving || !form) return;
+    setSaving(true);
+    setError('');
+    try {
+      if (form.id) {
+        const list = (await StorageService.loadTodoLists()).find(list => list.id === form.id);
+        if (list) await StorageService.updateTodoList({ ...list, name: name.trim() });
+      } else {
+        await StorageService.createTodoList(name.trim());
+      }
+      setLists(await StorageService.loadTodoLists());
+      setForm(null);
+    } catch { setError('Die Liste konnte nicht gespeichert werden. Bitte erneut versuchen.'); }
+    finally { setSaving(false); }
+  }
+  function deleteList(list: TodoList) {
+    setActionList(null);
+    confirm({ title: 'Liste löschen?', message: '„' + list.name + '“ und ' + list.items.length + ' enthaltene Aufgaben werden gelöscht.',
+      onConfirm: () => { void StorageService.deleteTodoList(list.id).then(setLists).catch(() => snackbar.show({ text: 'Die Liste konnte nicht gelöscht werden.' })); } });
+  }
+  const open = lists.reduce((sum, list) => sum + list.items.filter(item => !item.completed).length, 0);
   return (
     <View style={styles.container}>
-      <ScreenHeader
-        title="Meine Listen"
-        subtitle={totalItems > 0 ? `${totalDone} von ${totalItems} erledigt` : undefined}
-        actions={[
-          {
-            icon: 'construct-outline',
-            onPress: () => navigation.navigate('Debug'),
-            accessibilityLabel: 'Debug',
-          },
-          {
-            icon: 'settings-outline',
-            onPress: () => navigation.navigate('Settings'),
-            accessibilityLabel: 'Einstellungen',
-          },
-        ]}
-      />
-
-      {todoLists.length === 0 ? (
-        <EmptyState
-          icon="list-outline"
-          title="Noch keine Listen"
-          subtitle="Erstelle deine erste To-do-Liste."
-        />
-      ) : (
-        <FlatList
-          data={todoLists}
-          renderItem={renderListItem}
-          keyExtractor={item => item.id}
-          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-
-      <Fab icon="add" onPress={() => setIsModalVisible(true)} accessibilityLabel="Neue Liste" />
-
-      <Sheet
-        visible={isModalVisible}
-        onClose={closeCreate}
-        title="Neue Liste erstellen"
-        keyboardAware
-      >
-        <Input
-          placeholder="Listen-Name..."
-          value={newListName}
-          onChangeText={setNewListName}
-          autoFocus
-          onSubmitEditing={handleCreateList}
-          returnKeyType="done"
-        />
+      <ScreenHeader title="Aufgaben" subtitle={lists.length ? open + ' offen · ' + lists.length + (lists.length === 1 ? ' Liste' : ' Listen') : 'Platz für alles, was ansteht'}
+        actions={[{ icon: 'settings-outline', accessibilityLabel: 'App-Einstellungen', onPress: () => navigation.navigate('Settings') }]} />
+      <SyncNotice />
+      <FlatList data={lists} keyExtractor={item => item.id}
+        contentContainerStyle={[styles.content, !lists.length && { flex: 1 }]}
+        ListEmptyComponent={<EmptyState icon="checkbox-outline" title="Deine erste Liste" subtitle="Fasse zusammen, was zusammengehört — zum Beispiel Zuhause, Arbeit oder Urlaub." />}
+        renderItem={({ item }) => {
+          const done = item.items.filter(task => task.completed).length;
+          const remaining = item.items.length - done;
+          return (
+            <View style={styles.card}>
+              <Pressable style={({ pressed }) => [styles.openList, pressed && { opacity: 0.65 }]}
+                accessibilityRole="button" accessibilityLabel={item.name + ', ' + remaining + ' offene Aufgaben'}
+                onPress={() => navigation.navigate('TodoDetail', { list: item })}
+                onLongPress={() => setActionList(item)}>
+                <View style={[styles.listIcon, remaining === 0 && item.items.length > 0 && { backgroundColor: colors.successSurface }]}>
+                  <Ionicons name={remaining === 0 && item.items.length > 0 ? 'checkmark' : 'list-outline'} size={23}
+                    color={remaining === 0 && item.items.length > 0 ? colors.success : colors.accent} accessible={false} />
+                </View>
+                <View style={styles.cardBody}>
+                  <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.cardMeta}>{item.items.length ? remaining + ' offen · ' + done + ' erledigt' : 'Noch keine Aufgaben'}</Text>
+                </View>
+              </Pressable>
+              <IconButton icon="ellipsis-horizontal" accessibilityLabel={'Aktionen für ' + item.name} onPress={() => setActionList(item)} />
+            </View>
+          );
+        }} />
+      <Fab icon="add" label="Neue Liste" onPress={() => openForm()} accessibilityLabel="Neue Aufgabenliste" />
+      <Sheet visible={form !== null} onClose={() => !saving && setForm(null)} title={form?.id ? 'Liste umbenennen' : 'Neue Liste'}>
+        <Input label="Name" placeholder="Zum Beispiel Zuhause" value={name} onChangeText={setName} autoFocus
+          error={error} onSubmitEditing={save} returnKeyType="done" />
         <SheetActions>
-          <Button variant="secondary" onPress={closeCreate}>
-            Abbrechen
-          </Button>
-          <Button onPress={handleCreateList} disabled={!newListName.trim()}>
-            Erstellen
-          </Button>
+          <Button variant="secondary" onPress={() => setForm(null)} disabled={saving}>Abbrechen</Button>
+          <Button onPress={save} disabled={!name.trim()} loading={saving}>{form?.id ? 'Speichern' : 'Liste erstellen'}</Button>
         </SheetActions>
       </Sheet>
-
-      <Sheet
-        visible={isRenameModalVisible}
-        onClose={() => setIsRenameModalVisible(false)}
-        title="Liste umbenennen"
-        keyboardAware
-      >
-        <Input
-          placeholder="Neuer Name..."
-          value={renameText}
-          onChangeText={setRenameText}
-          autoFocus
-        />
-        <SheetActions>
-          <Button variant="secondary" onPress={closeRename}>
-            Abbrechen
-          </Button>
-          <Button onPress={handleRenameList} disabled={!renameText.trim()}>
-            Speichern
-          </Button>
-        </SheetActions>
+      <Sheet visible={!!actionList} onClose={() => setActionList(null)} title={actionList?.name}>
+        <ListRow title="Umbenennen" icon="pencil-outline" onPress={() => actionList && openForm(actionList)} />
+        <ListRow title="Liste löschen" icon="trash-outline" destructive onPress={() => actionList && deleteList(actionList)} />
       </Sheet>
-
-      <Sheet
-        visible={actionList !== null}
-        onClose={() => setActionList(null)}
-        title={actionList?.name}
-      >
-        <ListRow
-          title="Umbenennen"
-          icon="pencil-outline"
-          onPress={() => {
-            if (actionList) {
-              setRenamingList(actionList);
-              setRenameText(actionList.name);
-              setIsRenameModalVisible(true);
-              setActionList(null);
-            }
-          }}
-        />
-        <ListRow
-          title="Löschen"
-          icon="trash-outline"
-          destructive
-          onPress={() => actionList && handleDeleteList(actionList.id)}
-        />
-        <SheetActions>
-          <Button variant="secondary" onPress={() => setActionList(null)}>
-            Abbrechen
-          </Button>
-        </SheetActions>
-      </Sheet>
+      {confirmation}
+      {snackbar.element}
     </View>
   );
 }
-
-const createStyles = (t: Theme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.colors.bg },
-    list: { padding: t.spacing.lg },
-    card: { marginBottom: t.spacing.md },
-    avatar: {
-      width: 44,
-      height: 44,
-      borderRadius: t.radius.md,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginRight: t.spacing.md,
-    },
-    avatarText: { ...t.type.heading },
-    cardBody: { flex: 1 },
-    cardTitle: { ...t.type.bodyStrong, color: t.colors.text, marginBottom: t.spacing.sm },
-    progressRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.md },
-    progressTrack: {
-      flex: 1,
-      height: 4,
-      borderRadius: t.radius.pill,
-      backgroundColor: t.colors.surfaceAlt,
-      overflow: 'hidden',
-    },
-    progressFill: { height: 4, borderRadius: t.radius.pill },
-    cardCount: {
-      ...t.type.caption,
-      color: t.colors.textMuted,
-      minWidth: 36,
-      textAlign: 'right',
-    },
-  });
+const createStyles = (t: Theme) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: t.colors.bg },
+  content: { padding: 16, paddingBottom: 112 },
+  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: t.colors.surface,
+    borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: t.colors.border,
+    paddingRight: 4, marginBottom: 12 },
+  openList: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, minHeight: 88 },
+  listIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: t.colors.accentSurface, alignItems: 'center', justifyContent: 'center' },
+  cardBody: { flex: 1 },
+  cardTitle: { ...t.type.heading, color: t.colors.text },
+  cardMeta: { ...t.type.label, color: t.colors.textMuted, marginTop: 4 },
+});

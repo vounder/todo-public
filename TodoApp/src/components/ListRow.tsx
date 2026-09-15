@@ -40,12 +40,16 @@ export function ListRow({
       onPress={onPress}
       onLongPress={onLongPress}
       disabled={!onPress && !onLongPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={title}
+      accessibilityHint={subtitle}
+      accessibilityState={{ selected }}
       activeOpacity={0.7}
     >
       {leading}
       {icon && <Ionicons name={icon} size={20} color={fg} />}
       <View style={styles.body}>
-        <Text style={[styles.title, { color: fg }]} numberOfLines={1}>
+        <Text style={[styles.title, { color: fg }]}>
           {title}
         </Text>
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -58,6 +62,7 @@ export function ListRow({
 const createStyles = (t: Theme) =>
   StyleSheet.create({
     row: {
+      minHeight: 48,
       flexDirection: 'row',
       alignItems: 'center',
       gap: t.spacing.md,
