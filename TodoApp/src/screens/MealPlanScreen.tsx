@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { View, StyleSheet, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +29,7 @@ const dateLabel = (date: Date) => date.toLocaleDateString('de-DE', { weekday: 'l
 
 export default function MealPlanScreen({ navigation }: any) {
   const { colors } = useTheme();
+  const syncState = useSyncExternalStore(ApiService.subscribeSync, ApiService.getSyncSnapshot, ApiService.getSyncSnapshot);
   const styles = useThemedStyles(createStyles);
   const { width } = useWindowDimensions();
   const [entries, setEntries] = useState<MealPlanEntry[]>([]);
@@ -196,6 +197,14 @@ export default function MealPlanScreen({ navigation }: any) {
   const filteredRecipes = recipes.filter(recipe => recipe.name.toLocaleLowerCase('de-DE').includes(search.toLocaleLowerCase('de-DE')));
   const calendarWidth = Math.max(336, width - 16);
 
+  if (syncState.localOnly) return <View style={styles.container}>
+    <ScreenHeader title="Planer" />
+    <View style={{ padding: 24, gap: 20 }}>
+      <Text style={styles.mealTitle}>Gemeinsam planen</Text>
+      <Text>Der Essensplan und „Für später“ werden auf deinem Server gespeichert. Verbinde einen Server, um diese Funktionen zu nutzen. Aufgaben, Einkäufe und Gerichte kannst du bereits lokal verwalten.</Text>
+      <Button standalone onPress={() => navigation.navigate('Settings')}>Server verbinden</Button>
+    </View>
+  </View>;
   return <View style={styles.container}>
     <ScreenHeader title="Essensplan" subtitle={thisWeek ? 'Deine Woche im Überblick' : 'Woche ab ' + days[0].toLocaleDateString('de-DE')} actions={[
       { icon: 'settings-outline', accessibilityLabel: 'App-Einstellungen', onPress: () => navigation.navigate('Settings') },

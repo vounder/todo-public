@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TodoList, Tag, SortSettings, MealPlanEntry, ShoppingListDef } from '../types';
 import { ServerConfig } from './ServerConfig';
+import { probeConnection } from './ConnectionProbe';
 
 export type UpdateType = 'todos' | 'recipes' | 'shopping' | 'shoppingLists' | 'tags' | 'sortSettings' | 'mappings' | 'mealPlan' | 'mealReserve';
 type Listener = (data: any) => void;
 type Pending = { id: string; type: UpdateType; path: string; method: 'POST' | 'DELETE'; body?: object };
-export type ConnectionState = { pending: number; unavailable: boolean; syncing: boolean };
+export type ConnectionState = { pending: number; unavailable: boolean; syncing: boolean; localOnly?: boolean };
 const STORAGE_KEYS: Record<UpdateType, string> = {
   todos: '@todo_lists', recipes: '@recipes', shopping: '@shopping_list', shoppingLists: '@shopping_lists',
   tags: '@tags', sortSettings: '@sort_settings', mappings: '@ingredient_tag_mappings', mealPlan: '@mealplan', mealReserve: '@meal_reserve',
@@ -33,6 +34,8 @@ export class ApiService {
   private static reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private static reconnectAttempts = 0;
   private static intentionallyClosed = false;
+  private static changingConfiguration = false;
+  private static configurationVersion = 0;
 
   static getSyncSnapshot = () => ApiService.state;
   static subscribeSync = (listener: () => void) => {
@@ -41,7 +44,7 @@ export class ApiService {
   };
 
   private static emit() {
-    this.state = { pending: Object.keys(this.outbox).length, unavailable: this.failed.size > 0, syncing: this.flushing !== null };
+    this.state = { pending: Object.keys(this.outbox).length, unavailable: this.failed.size > 0, syncing: this.flushing !== null, localOnly: ServerConfig.isLocalOnly() };
     this.statusListeners.forEach(listener => listener());
   }
 
@@ -56,8 +59,9 @@ export class ApiService {
 
   static async initialize() {
     await ServerConfig.load();
-    if (!ServerConfig.getServerUrl()) return;
     await this.ready();
+    this.emit();
+    if (!ServerConfig.getServerUrl()) return;
     this.ensureConnected();
     await this.flush();
   }
@@ -78,23 +82,29 @@ export class ApiService {
   }
 
   private static async request(type: UpdateType, path: string, method = 'GET', body?: object): Promise<any> {
+    if (this.changingConfiguration) throw new Error('Serververbindung wird geändert.');
+    if (ServerConfig.isLocalOnly()) throw new Error('Diese Funktion benötigt einen Server. Verbinde ihn unter Einstellungen → Server verbinden.');
+    const configurationVersion = this.configurationVersion;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
     try {
       const clientId = method === 'GET' ? undefined : await this.getClientId();
       const suffix = method === 'DELETE' ? (path.includes('?') ? '&' : '?') + 'clientId=' + encodeURIComponent(clientId!) : '';
       const response = await fetch(this.baseUrl + path + suffix, {
-        method, headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+        method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ServerConfig.getAccessKey()}` }, signal: controller.signal,
         ...(body ? { body: JSON.stringify({ ...body, clientId }) } : {}),
       });
+      if (configurationVersion !== this.configurationVersion) throw new Error('Serververbindung wurde geändert.');
       // Only a structured record-not-found response is an idempotent delete.
       // An old server without this route also returns 404, but must stay pending.
       if (!response.ok) {
+        if (response.status === 401) throw new Error('Zugangsschlüssel ungültig. Bitte unter Einstellungen neu verbinden.');
         if (method !== 'DELETE' || response.status !== 404) throw new Error('Serverfehler ' + response.status);
         const missing = await response.json();
         if (!/^(List|Entry|Recipe|Tag) not found$/.test(missing.error || '')) throw new Error('Löschfunktion am Server nicht verfügbar');
       }
       const result = method === 'DELETE' ? true : (await response.json()).data;
+      if (configurationVersion !== this.configurationVersion) throw new Error('Serververbindung wurde geändert.');
       if (method !== 'DELETE' && (result === undefined || result === null)) throw new Error('Unvollständige Serverantwort');
       this.failed.delete(type);
       this.emit();
@@ -118,6 +128,7 @@ export class ApiService {
   }
 
   private static flush(): Promise<void> {
+    if (this.changingConfiguration || ServerConfig.isLocalOnly() || !ServerConfig.getServerUrl()) return Promise.resolve();
     if (this.flushing) return this.flushing;
     this.flushing = (async () => {
       await this.ready();
@@ -140,6 +151,7 @@ export class ApiService {
   }
 
   static async retry() {
+    if (ServerConfig.isLocalOnly()) return;
     await this.flush();
     await Promise.allSettled([...this.failed].map(async type => {
       if (this.hasPending(type)) return;
@@ -154,6 +166,10 @@ export class ApiService {
 
   private static async read(type: UpdateType, query = '') {
     await this.ready();
+    if (ServerConfig.isLocalOnly()) {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS[type]);
+      return raw ? JSON.parse(raw) : type === 'sortSettings' ? null : [];
+    }
     // Never replace unsent local edits with an older server snapshot.
     if (this.hasPending(type)) {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS[type]);
@@ -235,19 +251,19 @@ export class ApiService {
   }
 
   private static ensureConnected() {
-    if (!ServerConfig.getServerUrl()) return;
+    if (this.changingConfiguration || !ServerConfig.getServerUrl()) return;
     if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
     this.intentionallyClosed = false;
     try {
       this.ws = new WebSocket(this.wsUrl);
       this.ws.onopen = async () => {
         this.reconnectAttempts = 0;
-        this.ws?.send(JSON.stringify({ type: 'REGISTER', clientId: await this.getClientId() }));
-        void this.retry();
+        this.ws?.send(JSON.stringify({ type: 'REGISTER', clientId: await this.getClientId(), accessKey: ServerConfig.getAccessKey() }));
       };
       this.ws.onmessage = event => {
         try {
           const message = JSON.parse(event.data);
+          if (message.type === 'AUTH_OK') { void this.retry(); return; }
           const types: Record<string, UpdateType> = {
             UPDATE: 'todos', RECIPES_UPDATE: 'recipes', SHOPPING_UPDATE: 'shopping',
             SHOPPING_LISTS_UPDATE: 'shoppingLists', TAGS_UPDATE: 'tags', SORT_SETTINGS_UPDATE: 'sortSettings',
@@ -262,7 +278,7 @@ export class ApiService {
           }
         } catch { /* Invalid messages must not affect the local cache. */ }
       };
-      this.ws.onclose = () => { this.ws = null; this.scheduleReconnect(); };
+      this.ws.onclose = event => { this.ws = null; if (event.code === 4401) { this.failed.add('todos'); this.emit(); return; } this.scheduleReconnect(); };
       this.ws.onerror = () => {};
     } catch { this.scheduleReconnect(); }
   }
@@ -294,15 +310,31 @@ export class ApiService {
     if (ServerConfig.getServerUrl()) void this.initialize().catch(() => {});
   }
 
+  static async configure(url?: string, key = '') {
+    this.changingConfiguration = true;
+    this.configurationVersion++;
+    this.disconnectFromServer();
+    try {
+      await this.flushing;
+      await this.writing;
+      if (url) await ServerConfig.setConnection(url, key);
+      else await ServerConfig.useLocalOnly();
+      this.failed.clear();
+    } finally { this.changingConfiguration = false; }
+    this.emit();
+    void this.initialize().catch(() => {});
+  }
+
   static async testConnection() {
-    let httpAvailable = false;
-    try { await this.request('todos', '/todos'); httpAvailable = true; } catch {}
-    this.ensureConnected();
-    const wsAvailable = this.ws?.readyState === 1;
+    const url = ServerConfig.getServerUrl();
+    if (!url) return { success: false, httpAvailable: false, wsAvailable: false, error: 'Lokaler Modus: noch kein Server verbunden.', details: ['Server unter Einstellungen verbinden.'] };
+    const result = await probeConnection(url, ServerConfig.getAccessKey());
     return {
-      success: httpAvailable && wsAvailable, httpAvailable, wsAvailable,
-      error: httpAvailable && wsAvailable ? undefined : 'Verbindung nicht vollständig verfügbar',
-      details: [httpAvailable ? 'Server erreichbar' : 'Server nicht erreichbar', wsAvailable ? 'Live-Verbindung aktiv' : 'Live-Verbindung wird aufgebaut'],
+      success: result.success,
+      httpAvailable: result.checks.find(check => check.id === 'http')?.state === 'success',
+      wsAvailable: result.checks.find(check => check.id === 'websocket')?.state === 'success',
+      error: result.checks.find(check => check.state === 'error')?.message,
+      details: result.checks.map(check => `${check.label}: ${check.state === 'success' ? 'OK' : check.message || 'Nicht geprüft'}`),
     };
   }
 }

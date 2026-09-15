@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 
 $resolvedRoot = (Resolve-Path -LiteralPath $Root).Path
 $textExtensions = @(
-    ".cs", ".css", ".env", ".example", ".html", ".js", ".json", ".jsx",
+    ".cs", ".css", ".env", ".example", ".html", ".js", ".cjs", ".mjs", ".json", ".jsx",
     ".md", ".ps1", ".sh", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml"
 )
 
@@ -20,11 +20,20 @@ $patterns = [ordered]@{
 }
 
 $findings = [System.Collections.Generic.List[string]]::new()
-$files = Get-ChildItem -LiteralPath $resolvedRoot -File -Recurse |
-    Where-Object {
-        $_.FullName -notmatch "[\\/](?:\.git|node_modules|artifacts|dist|build)[\\/]" -and
-        ($textExtensions -contains $_.Extension.ToLowerInvariant() -or $_.Name -eq "Dockerfile")
+if (Test-Path -LiteralPath (Join-Path $resolvedRoot '.git')) {
+    $trackedPaths = @(& git -C $resolvedRoot ls-files)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate public repository files.' }
+    $allFiles = @($trackedPaths | ForEach-Object { Get-Item -LiteralPath (Join-Path $resolvedRoot $_) })
+} else {
+    $allFiles = @(Get-ChildItem -LiteralPath $resolvedRoot -File -Recurse |
+        Where-Object { $_.FullName -notmatch "[\\/](?:\.git|node_modules|artifacts|dist|build)[\\/]" })
+}
+foreach ($file in $allFiles) {
+    if ($file.Name -match '(?:^\.env$|\.local\.|\.deploylink$|\.(?:p12|jks|keystore|pem|key)$)') {
+        $findings.Add($file.Name + ' [private configuration or key file in public tree]')
     }
+}
+$files = @($allFiles | Where-Object { $textExtensions -contains $_.Extension.ToLowerInvariant() -or $_.Name -eq 'Dockerfile' })
 
 foreach ($file in $files) {
     $content = [System.IO.File]::ReadAllText($file.FullName)

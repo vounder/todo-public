@@ -1,69 +1,64 @@
 #!/usr/bin/env sh
 set -eu
 umask 077
-
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-command -v node >/dev/null || { echo "Node.js is required." >&2; exit 1; }
-command -v npm >/dev/null || { echo "npm is required." >&2; exit 1; }
-node_major=$(node -p "process.versions.node.split('.')[0]")
-[ "$node_major" -ge 20 ] || { echo "Node.js 20 or newer is required." >&2; exit 1; }
-
-(cd "$root/TodoApp" && npm ci)
-(cd "$root/server" && npm ci)
-
-if [ ! -f "$root/.env" ]; then
-  server_port=${TODO_SERVER_PORT:-8080}
-  database_name=${TODO_MONGO_DB_NAME:-todoapp}
-  cors_origins=${TODO_CORS_ORIGINS:-}
-
-  case "$server_port" in
-    ''|*[!0-9]*) echo "Invalid application server port." >&2; exit 1 ;;
+cd "$root"
+mode=''; non_interactive=''; deploydesk=''; no_start=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mode) [ "$#" -ge 2 ] || { echo '--mode benötigt einen Wert.' >&2; exit 1; }; mode=$2; shift ;;
+    --non-interactive) non_interactive='yes' ;;
+    --deploydesk) deploydesk='yes' ;;
+    --no-start) no_start='yes' ;;
+    *) echo "Unbekannte Option: $1" >&2; exit 1 ;;
   esac
-  [ "$server_port" -ge 1 ] && [ "$server_port" -le 65535 ] ||
-    { echo "Invalid application server port." >&2; exit 1; }
-  printf '%s' "$database_name" | grep -Eq '^[A-Za-z0-9_-]{1,63}$' ||
-    { echo "Invalid database name." >&2; exit 1; }
-  if [ -n "$cors_origins" ]; then
-    printf '%s' "$cors_origins" |
-      grep -Eq '^https?://[A-Za-z0-9._:-]+(,https?://[A-Za-z0-9._:-]+)*$' ||
-      { echo "Invalid CORS origins." >&2; exit 1; }
-  fi
-
-  if ! (
-    set -C
-    {
-      printf 'COMPOSE_PROJECT_NAME=todo-public-local\n'
-      printf 'SERVER_BIND_ADDRESS=127.0.0.1\n'
-      printf 'SERVER_HOST_PORT=%s\n' "$server_port"
-      printf 'SERVER_CONTAINER_PORT=%s\n' "$server_port"
-      printf 'MONGO_DB_NAME=%s\n' "$database_name"
-      printf 'CORS_ORIGINS=%s\n' "$cors_origins"
-    } > "$root/.env"
-  ) 2>/dev/null; then
-    echo ".env was created by another process; it was not changed."
+  shift
+done
+if [ -z "$mode" ]; then
+  if [ -n "$non_interactive" ]; then mode=server
   else
-    echo "Created local .env (configuration values were not displayed)."
+    printf 'Todo einrichten\n1. Android-App installieren\n2. Eigenen Server einrichten (Docker)\n3. Entwickeln (Node.js 24 LTS)\nAuswahl [1]: '
+    read -r choice
+    case "${choice:-1}" in 1) mode=app ;; 2) mode=server ;; 3) mode=developer ;; *) echo 'Bitte 1, 2 oder 3 auswählen.' >&2; exit 1 ;; esac
   fi
-else
-  echo ".env already exists; it was not changed."
 fi
-
-# DeployDesk's runner is Windows PowerShell. The shell setup creates its local
-# link only when every target variable was deliberately supplied.
-if [ ! -f "$root/todo-public.deploylink" ] &&
-   [ -n "${TODO_DEPLOY_PROJECT_ID:-}" ] &&
-   [ -n "${TODO_DEPLOY_HOST:-}" ] &&
-   [ -n "${TODO_DEPLOY_USER:-}" ] &&
-   [ -n "${TODO_DEPLOY_SSH_PORT:-}" ] &&
-   [ -n "${TODO_DEPLOY_REMOTE_PATH:-}" ] &&
-   [ -n "${TODO_DEPLOY_BRANCH:-}" ] &&
-   [ -n "${TODO_DEPLOY_HEALTH_PORT:-}" ] &&
-   [ -n "${TODO_DEPLOY_HEALTH_PATH:-}" ]; then
-  (
-    cd "$root"
-    node -e 'const fs=require("fs");const e=process.env;const port=n=>{if(!/^\d{1,5}$/.test(e[n])||+e[n]<1||+e[n]>65535)throw Error("invalid "+n);return +e[n]};const ok=(n,r)=>{if(!r.test(e[n]))throw Error("invalid "+n);return e[n]};const remotePath=()=>{const v=ok("TODO_DEPLOY_REMOTE_PATH",/^\/[A-Za-z0-9._/-]+$/);if(v.length>1024||v.split("/").some(x=>x==="."||x===".."))throw Error("invalid TODO_DEPLOY_REMOTE_PATH");return v};const c={schemaVersion:2,project:{id:ok("TODO_DEPLOY_PROJECT_ID",/^[a-z0-9][a-z0-9_-]{1,63}$/),name:"Todo Public",description:"Locally configured deployment target.",accentColor:"#4F46E5"},repository:{remote:"origin",branch:ok("TODO_DEPLOY_BRANCH",/^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/)},server:{name:"Deployment environment",host:ok("TODO_DEPLOY_HOST",/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/),user:ok("TODO_DEPLOY_USER",/^[A-Za-z_][A-Za-z0-9._-]{0,31}$/),sshPort:port("TODO_DEPLOY_SSH_PORT"),remotePath:remotePath(),healthCheck:{port:port("TODO_DEPLOY_HEALTH_PORT"),path:ok("TODO_DEPLOY_HEALTH_PATH",/^\/[A-Za-z0-9._~%/?=&-]{0,2047}$/),expectedStatus:200,attempts:20,intervalSeconds:2}},runner:{type:"powershell",file:"deploy/deploy.ps1",protocol:"deploydesk-jsonl-v1",arguments:[]},options:[],links:[]};fs.writeFileSync("todo-public.deploylink",JSON.stringify(c,null,2)+"\n",{encoding:"utf8",flag:"wx",mode:0o600});'
-  )
-  echo "Created local DeployDesk configuration."
-else
-  echo "DeployDesk configuration was not created; use setup.ps1 interactively or set all TODO_DEPLOY_* variables."
+if [ -n "$deploydesk" ] && [ "$mode" != server ]; then echo 'DeployDesk gehört zum Server-Setup: --mode server --deploydesk.' >&2; exit 1; fi
+case "$mode" in
+  app)
+    printf 'APK: https://github.com/vounder/todo-public/releases/latest\nAuf Android öffnen und installieren. Danach lokal starten oder den Server-QR-Code scannen.\n'
+    exit 0 ;;
+  developer)
+    command -v node >/dev/null || { echo 'Bitte Node.js 24 LTS installieren: https://nodejs.org/en/download' >&2; exit 1; }
+    command -v npm >/dev/null || { echo 'npm fehlt.' >&2; exit 1; }
+    [ "$(node -p 'process.versions.node.split(".")[0]')" = 24 ] || { echo 'Bitte Node.js 24 LTS verwenden.' >&2; exit 1; }
+    (cd TodoApp && npm ci)
+    (cd server && npm ci)
+    printf 'Entwicklung bereit: cd TodoApp && npm start\nServer separat: ./setup.sh --mode server\n'
+    exit 0 ;;
+  server) ;;
+  *) echo 'Modus muss app, server oder developer sein.' >&2; exit 1 ;;
+esac
+command -v docker >/dev/null || { echo 'Docker mit Compose fehlt. Siehe README.md.' >&2; exit 1; }
+docker info --format '{{.ServerVersion}}'
+docker compose version
+env_file='.env.example'; [ ! -f .env ] || env_file='.env'
+docker compose --env-file "$env_file" build server
+if [ -z "${TODO_NETWORK_ADDRESSES:-}" ]; then
+  if command -v hostname >/dev/null 2>&1; then TODO_NETWORK_ADDRESSES=$(hostname -I 2>/dev/null | tr ' ' ',' || true); fi
+  if [ -z "${TODO_NETWORK_ADDRESSES:-}" ] && command -v ipconfig >/dev/null 2>&1; then TODO_NETWORK_ADDRESSES=$(ipconfig getifaddr en0 2>/dev/null || true); fi
 fi
+export TODO_NETWORK_ADDRESSES
+set -- compose --env-file "$env_file" run --rm --no-deps -T --user "$(id -u):$(id -g)" --volume "$root:/workspace"
+for name in TODO_NETWORK_ADDRESSES TODO_BIND_ADDRESS TODO_SERVER_PORT TODO_MONGO_DB_NAME TODO_PUBLIC_URL TODO_CORS_ORIGINS TODO_DEPLOY_HOST TODO_DEPLOY_USER TODO_DEPLOY_REMOTE_PATH TODO_DEPLOY_PROJECT_ID TODO_DEPLOY_BRANCH TODO_DEPLOY_SSH_PORT TODO_DEPLOY_HEALTH_PORT; do
+  set -- "$@" --env "$name"
+done
+set -- "$@" server node setup/cli.js --root /workspace
+[ -z "$non_interactive" ] || set -- "$@" --non-interactive
+[ -z "$deploydesk" ] || set -- "$@" --deploydesk
+docker "$@"
+docker compose config --quiet
+if [ -z "$no_start" ]; then
+  docker compose up -d --wait --wait-timeout 120
+  echo 'Server und Datenbank sind bereit.'
+fi
+printf 'Öffne setup-card.local.html und scanne den QR-Code in der App.\nStatus: docker compose ps\nProtokoll: docker compose logs --tail 50 server\nStoppen: docker compose down (Daten bleiben erhalten).\n'

@@ -5,6 +5,8 @@ const { v4: uuidv4 } = require('uuid');
 
 const { connectDB, mongoose } = require('./db');
 const { healthResponse } = require('./health');
+const { createAccessControl } = require('./auth');
+const { socketSession } = require('./socketSession');
 const TodoList = require('./models/TodoList');
 const Recipe = require('./models/Recipe');
 const ShoppingItem = require('./models/ShoppingItem');
@@ -17,11 +19,13 @@ const MealReserve = require('./models/MealReserve');
 const deleteResource = require('./deleteResource');
 
 const app = express();
+const access = createAccessControl(process.env.TODO_ACCESS_KEY);
 const PORT = Number(process.env.PORT || 8080);
 const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(origin => origin.trim()).filter(Boolean);
 
 app.use(cors(corsOrigins.length ? { origin: corsOrigins } : {}));
 app.use(express.json());
+app.use('/api', access.middleware);
 
 let wsClients = [];
 
@@ -48,6 +52,11 @@ function broadcast(type, data, excludeClientId = null) {
 app.get('/health', (req, res) => {
   const health = healthResponse(mongoose.connection.readyState === 1);
   res.status(health.statusCode).json({ ...health.body, timestamp: Date.now() });
+});
+
+app.get('/api/connection', (req, res) => {
+  const health = healthResponse(mongoose.connection.readyState === 1);
+  res.status(health.statusCode).json({ ...health.body, authentication: 'required' });
 });
 
 // ---- TODOS ----
@@ -495,56 +504,21 @@ async function start() {
     console.log(`WebSocket: ws://0.0.0.0:${PORT}`);
   });
 
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, maxPayload: 65536 });
 
-  wss.on('connection', async (ws) => {
+  wss.on('connection', (ws) => {
     ws.id = uuidv4();
-    ws.clientId = null; // wird vom Client per REGISTER-Message gesetzt
-    ws.isAlive = true;
-    wsClients.push(ws);
-    console.log(`Client verbunden: ${ws.id} (${wsClients.length} aktiv)`);
-
-    try {
-      const [todos, recipes, shopping] = await Promise.all([
-        TodoList.find().lean(),
-        Recipe.find().lean(),
-        ShoppingItem.find().lean()
-      ]);
-      ws.send(JSON.stringify({
-        type: 'INIT',
-        data: { todos, recipes, shopping },
-        timestamp: Date.now()
-      }));
-    } catch (err) {
-      console.error('INIT Fehler:', err.message);
-    }
-
-    ws.on('message', (message) => {
-      try {
-        const data = JSON.parse(message);
-        if (data.type === 'REGISTER' && typeof data.clientId === 'string') {
-          // Client identifiziert sich, damit Broadcasts ihn als
-          // Absender ausschliessen koennen (kein Echo eigener Updates).
-          ws.clientId = data.clientId;
-          console.log(`Client ${ws.id} registriert als ${data.clientId}`);
-        } else if (data.type === 'SYNC') {
-          broadcast('UPDATE', [], ws.clientId);
-        }
-      } catch (err) {
-        console.error('Fehler beim Parsen:', err);
-      }
+    socketSession(ws, {
+      accepts: access.accepts,
+      ready: () => mongoose.connection.readyState === 1,
+      register: client => { wsClients.push(client); },
+      unregister: client => { wsClients = wsClients.filter(c => c !== client); },
+      initialData: async () => {
+        const [todos, recipes, shopping] = await Promise.all([TodoList.find().lean(), Recipe.find().lean(), ShoppingItem.find().lean()]);
+        return { todos, recipes, shopping };
+      },
+      sync: client => broadcast('UPDATE', [], client.clientId),
     });
-
-    ws.on('pong', () => {
-      ws.isAlive = true;
-    });
-
-    ws.on('close', () => {
-      wsClients = wsClients.filter(c => c.id !== ws.id);
-      console.log(`Client getrennt: ${ws.id} (${wsClients.length} aktiv)`);
-    });
-
-    ws.on('error', (err) => console.error('WebSocket Fehler:', err));
   });
 
   // Heartbeat: tote Verbindungen erkennen und aufraeumen

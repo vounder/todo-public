@@ -61,6 +61,8 @@ function setup(fetcher, values = new Map()) {
       getServerUrl: () => 'https://sync.example.test',
       getApiUrl: () => 'https://sync.example.test/api',
       getWebSocketUrl: () => 'wss://sync.example.test',
+      getAccessKey: () => 'test-access-key',
+      isLocalOnly: () => false,
     } },
   }, {
     fetch: fetcher, WebSocket: class { readyState = 3; close() {} send() {} },

@@ -2,7 +2,7 @@
   "expo": {
     "name": "TodoApp",
     "slug": "TodoApp",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -11,7 +11,7 @@
       "supportsTablet": true
     },
     "android": {
-      "versionCode": 11,
+      "versionCode": 12,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F7F8FA"
@@ -43,7 +43,16 @@
             "backgroundColor": "#0F1319"
           }
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Todo verwendet die Kamera nur zum Scannen deines Server-QR-Codes.",
+          "recordAudioAndroid": false
+        }
       ]
-    ]
+    ],
+    "scheme": "todopublic"
   }
 }

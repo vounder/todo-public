@@ -1,5 +1,34 @@
 # Installationsanalyse – 15.09.2026
 
+## Umsetzung in Version 1.2.0
+
+Die nachfolgende ursprüngliche Analyse wurde umgesetzt:
+
+- Getrennte Setupwege `app`, `server` und `developer` auf Windows und Unix.
+  App-Nutzer benötigen keine Entwicklungswerkzeuge; Serverbetreiber nur Docker.
+- DeployDesk ist ausdrücklich optional. Das nicht-interaktive lokale Setup
+  funktioniert ohne SSH-/Deploymentangaben.
+- Gemeinsamer Assistent für Port, Datenbank, privaten Netzwerk-/VPN-Zugang,
+  wiederholbare Konfiguration und eine lokale QR-Einrichtungskarte.
+- Zufälliger Zugangsschlüssel für REST und WebSocket. Vor der Anmeldung werden
+  keine Nutzerdaten gesendet. Native Zugangsdaten liegen im sicheren Gerätespeicher.
+- Die App bietet zuerst einen lokalen Einstieg. Verbindungstests prüfen HTTP,
+  Datenbank, Anmeldung und WebSocket getrennt; nur eine erfolgreiche Verbindung
+  wird gespeichert. QR-Codes und App-Links übernehmen die Verbindungsdaten.
+- Node.js 24 LTS in Engines, Setup, Versionsdateien, CI und Container.
+- Eigenständiger signierter APK-Build mit dokumentierter, stabiler öffentlicher
+  Signatur; kein Expo- oder Entwicklungsserver für die Nutzung erforderlich.
+- Die CI enthält einen echten Docker-Installationstest samt Wiederholung,
+  Zugriffsschutz, API-Schreibtest und WebSocket-Anmeldung.
+
+Die aktuelle Anleitung steht in [README.md](README.md). Die alte Bewertung
+unten beschreibt den Ausgangszustand, nicht Version 1.2.0. Ein neuer messbarer
+Usability-Wert benötigt Nutzertests; ein technischer Durchlauf allein ersetzt
+diese nicht. VPN-/TLS-Betrieb, Backups und Firewallregeln bleiben Aufgaben des
+Serverbetreibers und sind nun ausdrücklich erklärt.
+
+## Ursprünglicher Befund vor der Umsetzung
+
 ## Einschätzung
 
 Für Menschen ohne Entwicklungserfahrung ist die Einrichtung derzeit schwierig:

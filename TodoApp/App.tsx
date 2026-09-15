@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useState } from 'react';
-import { View, StyleSheet, AppState, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, AppState, Linking, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
@@ -74,8 +74,13 @@ function MainTabs() {
 function AppInner() {
   const { colors, isDark } = useTheme();
   const [serverReady, setServerReady] = useState<boolean | null>(null);
+  const [connectionLink, setConnectionLink] = useState<string>();
   useEffect(() => {
-    ServerConfig.load().then(url => setServerReady(!!url)).catch(() => setServerReady(false));
+    ServerConfig.load().then(() => setServerReady(ServerConfig.isConfigured())).catch(() => setServerReady(false));
+    const receive = (url: string | null) => { if (url?.startsWith('todopublic://connect')) setConnectionLink(url); };
+    void Linking.getInitialURL().then(receive);
+    const subscription = Linking.addEventListener('url', event => receive(event.url));
+    return () => subscription.remove();
   }, []);
   useEffect(() => {
     if (!serverReady) return;
@@ -93,7 +98,8 @@ function AppInner() {
   return <View style={{ flex: 1, backgroundColor: colors.bg }}>
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      {serverReady === null ? null : !serverReady ? <ServerSetupScreen onComplete={() => setServerReady(true)} /> :
+      {serverReady === null ? null : (!serverReady || connectionLink) ? <ServerSetupScreen initialLink={connectionLink}
+        onComplete={() => { setConnectionLink(undefined); setServerReady(true); }} onCancel={serverReady ? () => setConnectionLink(undefined) : undefined} /> :
       <NavigationContainer theme={theme}>
         <Root.Navigator screenOptions={{ headerShown: false }}>
           <Root.Screen name="MainTabs" component={MainTabs} />

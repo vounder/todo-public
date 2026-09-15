@@ -18,11 +18,12 @@ function setup(initialUrl) {
   }
   const { ApiService } = loadTs('src/services/ApiService', {
     '@react-native-async-storage/async-storage': storage,
+    './ConfigPersistence': { ConfigPersistence: { read: async () => values.get('secure') ?? null, write: async value => values.set('secure', value) } },
   }, {
     URL, process: { env: {} }, WebSocket: Socket,
     fetch: async url => { calls.push(url); return { ok: true, json: async () => ({ data: [] }) }; },
   });
-  return { api: ApiService, sockets, calls };
+  return { api: ApiService, sockets, calls, values };
 }
 
 test('a fresh public install makes no network connection before server setup', async () => {
@@ -31,6 +32,19 @@ test('a fresh public install makes no network connection before server setup', a
   assert.equal(sockets.length, 0);
   assert.equal(calls.length, 0);
   assert.equal(api.getServerInfo().baseUrl, 'Nicht konfiguriert');
+});
+
+test('local mode survives a restart and never sends queued changes until explicitly connected', async () => {
+  const { api, sockets, calls, values } = setup();
+  await api.configure();
+  await api.syncTodoListsToServer([{ id: 'local', items: [] }]);
+  await api.retry();
+  assert.equal(api.getSyncSnapshot().localOnly, true);
+  assert.equal(api.getSyncSnapshot().pending, 1);
+  assert.equal(sockets.length, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(JSON.parse(values.get('secure')).localOnly, true);
+  assert.equal(JSON.parse(values.get('@sync_outbox_v1')).todos.body.lists[0].id, 'local');
 });
 
 test('startup uses the persisted server for both REST and WebSocket', async () => {

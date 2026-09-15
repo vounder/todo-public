@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme, ThemeMode, useTheme, useThemedStyles } from '../theme/ThemeContext';
-import { Text, ScreenHeader, Card, ListRow, Input, Button } from '../components';
+import { Text, ScreenHeader, Card, ListRow } from '../components';
+import { ServerConnectionForm } from '../components/ServerConnectionForm';
 import { ServerConfig } from '../services/ServerConfig';
 import { ApiService } from '../services/ApiService';
 
@@ -15,32 +16,13 @@ const APPEARANCE_OPTIONS: { mode: ThemeMode; label: string; description: string 
 export default function SettingsScreen({ navigation }: any) {
   const { colors, mode, setMode } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const [serverUrl, setServerUrl] = useState('');
-  const [error, setError] = useState<string | undefined>();
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { setServerUrl(ServerConfig.getServerUrl() ?? ''); }, []);
-  const saveServer = async () => {
-    setSaving(true); setError(undefined);
-    try { setServerUrl(await ServerConfig.setOverride(serverUrl)); ApiService.reconnectForConfigurationChange(); }
-    catch (e: any) { setError(e.message); }
-    finally { setSaving(false); }
-  };
-  const resetServer = async () => {
-    const buildDefault = ServerConfig.getBuildDefault();
-    if (!buildDefault) {
-      setError('Für diesen Build ist kein Server-Standard hinterlegt.');
-      return;
-    }
-    setServerUrl((await ServerConfig.resetOverride()) ?? '');
-    setError(undefined);
-    ApiService.reconnectForConfigurationChange();
-  };
+  const [localOnly, setLocalOnly] = useState(ServerConfig.isLocalOnly());
 
   return (
     <View style={styles.container}>
       <ScreenHeader title="Einstellungen" onBack={() => navigation.goBack()} />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.sectionHead}>
           <Ionicons name="contrast-outline" size={16} color={colors.textMuted} />
           <Text style={styles.sectionTitle}>Erscheinungsbild</Text>
@@ -63,17 +45,12 @@ export default function SettingsScreen({ navigation }: any) {
           ))}
         </Card>
 
-        <View style={styles.sectionHead}>
+        <View style={[styles.sectionHead, { marginTop: 24 }]}>
           <Ionicons name="server-outline" size={16} color={colors.textMuted} />
-          <Text style={styles.sectionTitle}>Synchronisationsserver</Text>
+          <Text style={styles.sectionTitle}>{localOnly ? 'Lokal auf diesem Gerät' : 'Server verbinden'}</Text>
         </View>
         <Card padding="sm">
-          <Input label="Server-URL" value={serverUrl} onChangeText={setServerUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="https://example.com" error={error} />
-          <View style={styles.buttonRow}>
-            <Button standalone size="sm" onPress={saveServer} loading={saving}>Speichern</Button>
-            <Button standalone size="sm" variant="secondary" onPress={resetServer}>Build-Standard</Button>
-          </View>
-          <Text style={styles.hint}>REST und WebSocket werden automatisch aus dieser Adresse abgeleitet.</Text>
+          <ServerConnectionForm onComplete={() => setLocalOnly(false)} onLocal={() => setLocalOnly(true)} />
         </Card>
         <View style={[styles.sectionHead, { marginTop: 24 }]}>
           <Text style={styles.sectionTitle}>Hilfe und Verbindung</Text>

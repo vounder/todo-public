@@ -5,10 +5,10 @@ const { healthResponse } = require('../health');
 test('reports ready only when the database is connected', () => {
   assert.deepEqual(healthResponse(true), {
     statusCode: 200,
-    body: { status: 'ok', database: 'ready' },
+    body: { service: 'todo-public', protocol: 1, status: 'ok', database: 'ready' },
   });
   assert.deepEqual(healthResponse(false), {
     statusCode: 503,
-    body: { status: 'unavailable', database: 'not-ready' },
+    body: { service: 'todo-public', protocol: 1, status: 'unavailable', database: 'not-ready' },
   });
 });

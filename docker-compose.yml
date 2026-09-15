@@ -26,6 +26,13 @@ services:
       MONGODB_URI: mongodb://mongo:27017/${MONGO_DB_NAME:-todoapp}
       PORT: ${SERVER_CONTAINER_PORT:-8080}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      TODO_ACCESS_KEY: ${TODO_ACCESS_KEY:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 12
     depends_on:
       mongo:
         condition: service_healthy
