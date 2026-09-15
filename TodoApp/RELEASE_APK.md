@@ -5,7 +5,7 @@ lokal verwendet oder per QR-Code mit einem Server verbunden werden. Das
 öffentliche Android-Paket heißt `com.todoapp.mobile`.
 
 Fertige Downloads: [GitHub-Releases](https://github.com/vounder/todo-public/releases/latest).
-Version 1.2.0 verwendet Android versionCode 12. Für Updates dieselbe öffentliche
+Version 1.2.0 verwendet Android versionCode 13. Für Updates dieselbe öffentliche
 Signatur verwenden und einen höheren versionCode wählen. Die APK enthält
 keine persönlichen Serveradressen oder Zugangsschlüssel.
 

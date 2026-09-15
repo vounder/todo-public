@@ -270,9 +270,13 @@ export class ApiService {
             MAPPINGS_UPDATE: 'mappings', MEALPLAN_UPDATE: 'mealPlan', MEALRESERVE_UPDATE: 'mealReserve',
           };
           if (message.type === 'INIT') {
-            for (const type of ['todos', 'recipes', 'shopping'] as const) {
-              if (Array.isArray(message.data?.[type])) void this.notify(type, message.data[type]).catch(() => {});
-            }
+            // The initial snapshot may predate the local queue being flushed.
+            // Read again after the flush instead of replacing freshly synced edits.
+            void this.retry().then(async () => {
+              for (const type of ['todos', 'recipes', 'shopping'] as const) {
+                if (Array.isArray(message.data?.[type])) await this.notify(type, await this.read(type));
+              }
+            }).catch(() => {});
           } else if (types[message.type] && message.data != null) {
             void this.notify(types[message.type], message.data).catch(() => {});
           }

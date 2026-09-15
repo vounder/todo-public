@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const loadTs = require('./load-ts.cjs');
 
-function setup(initialUrl) {
+function setup(initialUrl, fetcher) {
   const values = new Map(initialUrl ? [['@server_url_override', initialUrl]] : []);
   const sockets = [];
   const calls = [];
@@ -21,7 +21,7 @@ function setup(initialUrl) {
     './ConfigPersistence': { ConfigPersistence: { read: async () => values.get('secure') ?? null, write: async value => values.set('secure', value) } },
   }, {
     URL, process: { env: {} }, WebSocket: Socket,
-    fetch: async url => { calls.push(url); return { ok: true, json: async () => ({ data: [] }) }; },
+    fetch: async (url, options) => { calls.push(url); return fetcher ? fetcher(url, options) : { ok: true, json: async () => ({ data: [] }) }; },
   });
   return { api: ApiService, sockets, calls, values };
 }
@@ -66,5 +66,38 @@ test('configuration reconnect detaches the old socket before opening its replace
   assert.equal(sockets[0].onclose, null);
   assert.equal(sockets[0].onmessage, null);
   assert.equal(sockets[1].url, 'wss://sync.example.test');
+  api.disconnectFromServer();
+});
+
+test('initial server snapshot cannot erase local edits after their first sync', async () => {
+  let serverLists = [];
+  let releaseWrite;
+  const writeStarted = new Promise(resolve => { releaseWrite = resolve; });
+  let continueWrite;
+  const writeGate = new Promise(resolve => { continueWrite = resolve; });
+  const { api, sockets, values } = setup(undefined, async (url, options) => {
+    if (options.method === 'POST') {
+      releaseWrite();
+      await writeGate;
+      serverLists = JSON.parse(options.body).lists;
+    }
+    return { ok: true, json: async () => ({ data: serverLists }) };
+  });
+  await api.configure();
+  const local = [{ id: 'kept', name: 'Local list', items: [] }];
+  values.set('@todo_lists', JSON.stringify(local));
+  await api.syncTodoListsToServer(local);
+  await api.configure('https://sync.example.test', 'a'.repeat(64));
+  await writeStarted;
+  const notifications = [];
+  const unsubscribe = api.subscribe('todos', data => notifications.push(data));
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'INIT', data: { todos: [] } }) });
+  continueWrite();
+  await api.retry();
+  for (let count = 0; count < 50 && !notifications.length; count++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(api.getSyncSnapshot().pending, 0);
+  assert.equal(JSON.parse(values.get('@todo_lists'))[0].id, 'kept');
+  assert.equal(notifications.at(-1)?.[0].id, 'kept');
+  unsubscribe();
   api.disconnectFromServer();
 });

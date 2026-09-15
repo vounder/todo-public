@@ -27,6 +27,24 @@ Usability-Wert benötigt Nutzertests; ein technischer Durchlauf allein ersetzt
 diese nicht. VPN-/TLS-Betrieb, Backups und Firewallregeln bleiben Aufgaben des
 Serverbetreibers und sind nun ausdrücklich erklärt.
 
+### Technische Prüfung der Veröffentlichung
+
+- 32 App-Tests und 8 Server-Tests; TypeScript-Prüfung und Expo-Kompatibilitätsprüfung.
+- GitHub CI prüft zusätzlich den Web-Build und die tatsächliche Docker-/MongoDB-
+  Installation einschließlich erneutem Setup und authentifiziertem Schreibzugriff.
+- Signierte Release-APK im isolierten Android-36-Emulator: erster Start ohne
+  Server, lokale Einträge nach Neustart, Update vom internen Build 12 auf 13
+  ohne Datenverlust, Ablehnung eines falschen Schlüssels und anschließende
+  Anmeldung per App-Link mit Synchronisation der lokalen Einkaufsliste.
+- APK-Signatur und Android-Mindestversion 7 geprüft. Keine Speicher-, Overlay-
+  oder Mikrofonberechtigungen; die Kamera dient dem QR-Scanner.
+
+Der native Verbindungstest verwendet einen isolierten HTTP-/WebSocket-Testserver;
+Docker und MongoDB werden separat in CI geprüft. Physische Android-Geräte,
+optisches QR-Scannen, iOS und ein produktiver VPN-/TLS-Aufbau sind damit nicht
+als getestet ausgewiesen. Verbleibende transitive Expo-Werkzeugabhängigkeiten
+sind in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) dokumentiert.
+
 ## Ursprünglicher Befund vor der Umsetzung
 
 ## Einschätzung

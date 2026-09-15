@@ -1,6 +1,6 @@
 param(
   [string]$VersionName = '1.2.0',
-  [int]$VersionCode = 12,
+  [int]$VersionCode = 13,
   [string]$SourceRoot,
   [string]$OutputDirectory,
   [Parameter(Mandatory = $true)][string]$CredentialsPath
